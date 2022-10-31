@@ -5,7 +5,15 @@ library MathUtils {
         return a > b ? a - b : b - a;
     }
 
-    function zeroCapSub(uint256 a, uint256 b) internal pure returns(uint) {
+    function zeroCapSub(uint256 a, uint256 b) internal pure returns (uint256) {
         return a > b ? a - b : 0;
+    }
+
+    function frac(uint256 amount, uint256 num, uint256 denom) internal pure returns (uint256) {
+        return amount * num / denom;
+    }
+
+    function min(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a < b ? a : b;
     }
 }

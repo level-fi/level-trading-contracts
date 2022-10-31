@@ -44,9 +44,9 @@ interface IPool {
 
     function swap(address _tokenIn, address _tokenOut, uint256 _minOut, address _to) external;
 
-    function addLiquidity(
-        address _tranche, address _token, uint256 _amountIn, uint256 _minLpAmount, address _to
-    ) external payable;
+    function addLiquidity(address _tranche, address _token, uint256 _amountIn, uint256 _minLpAmount, address _to)
+        external
+        payable;
 
     // =========== EVENTS ===========
     event SetOrderManager(address orderManager);
@@ -103,7 +103,8 @@ interface IPool {
         SignedInt pnl,
         uint256 feeValue
     );
-    event FeeWithdrawn(address token, address recipient, uint256 amount);
+    event DaoFeeWithdrawn(address token, address recipient, uint256 amount);
+    event DaoFeeReduced(address token, uint256 amount);
     event FeeDistributorSet(address feeDistributor);
     event LiquidityAdded(
         address indexed tranche, address indexed sender, address token, uint256 amount, uint256 lpAmount, uint256 fee
@@ -114,6 +115,7 @@ interface IPool {
     event TokenWeightSet(TokenWeight[]);
     event Swap(address sender, address tokenIn, address tokenOut, uint256 amountIn, uint256 amountOut, uint256 fee);
     event PositionFeeSet(uint256 positionFee, uint256 liquidationFee);
+    event DaoFeeSet(uint256 value);
     event SwapFeeSet(
         uint256 baseSwapFee, uint256 taxBasisPoint, uint256 stableCoinBaseSwapFee, uint256 stableCoinTaxBasisPoint
     );

@@ -28,6 +28,9 @@ struct Fee {
     /// @notice tax used to adjust swapFee due to the effect of the action on token's weight
     /// It reduce swap fee when user add some amount of a under weight token to the pool
     uint256 stableCoinTaxBasisPoint;
+    /// @notice part of fee will be kept for DAO, the rest will be distributed to pool amount, thus
+    /// increase the pool value and the price of LP token
+    uint256 daoFee;
 }
 
 struct Position {
@@ -43,26 +46,28 @@ struct Position {
     uint256 borrowIndex;
 }
 
-struct PoolAsset {
+struct PoolTokenInfo {
+    /// @notice amount reserved for fee
+    uint256 feeReserve;
+    /// @notice recorded balance of token in pool
+    uint256 poolBalance;
+    /// @notice last borrow index update timestamp
+    uint256 lastAccrualTimestamp;
+    /// @notice accumulated interest rate
+    uint256 borrowIndex;
+    /// @notice average entry price of all short position
+    uint256 averageShortPrice;
+}
+
+struct AssetInfo {
     /// @notice amount of token deposited (via add liquidity or increase long position)
     uint256 poolAmount;
     /// @notice amount of token reserved for paying out when user decrease long position
     uint256 reservedAmount;
-    /// @notice amount reserved for fee
-    uint256 feeReserve;
     /// @notice total borrowed (in USD) to leverage
     uint256 guaranteedValue;
     /// @notice total size of all short positions
     uint256 totalShortSize;
-    /// @notice average entry price of all short position
-    uint256 averageShortPrice;
-    /// @notice recorded balance of token in pool
-    uint256 poolBalance;
-    /// @notice balance added by liquiditiy provider
-    uint256 liquidity;
-    uint256 lastAccrualTimestamp;
-    /// @notice accumulated interest rate
-    uint256 borrowIndex;
 }
 
 abstract contract PoolStorage {
@@ -71,6 +76,9 @@ abstract contract PoolStorage {
     address public feeDistributor;
 
     IOracle public oracle;
+
+    address public orderManager;
+
     // ========= Assets management =========
     mapping(address => bool) public isAsset;
     /// @notice A list of all configured assets
@@ -83,11 +91,21 @@ abstract contract PoolStorage {
 
     mapping(address => bool) public isStableCoin;
 
-    mapping(address => PoolAsset) public poolAssets;
+    mapping(address => PoolTokenInfo) public poolTokens;
 
-    address public orderManager;
     /// @notice target weight for each tokens
     mapping(address => uint256) public targetWeights;
+
+    mapping(address => bool) public isTranche;
+
+    mapping(address => uint256) public trancheShares;
+
+    uint256 public totalTrancheShare;
+
+    address[] public allTranches;
+
+    mapping(address => mapping(address => AssetInfo)) public trancheAssets;
+
     /// @notice interest rate model
     uint256 public interestRate;
 
@@ -103,15 +121,4 @@ abstract contract PoolStorage {
     uint256 public maxPositionSize;
 
     IPositionHook public positionHook;
-
-    mapping(address => bool) public isTranche;
-
-    mapping(address => uint256) public trancheShares;
-
-    uint256 public totalTrancheShare;
-
-    address[] public allTranches;
-    /// @notice noted balance of each token in each tranche
-    /// @dev token => tranche => amount
-    mapping(address => mapping(address => uint)) public tranchePoolBalance;
 }
