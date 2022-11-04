@@ -17,14 +17,14 @@ struct TokenConfig {
 }
 
 /// @title PriceFeed
-/// @notice Price feed with guard from
+/// @notice Price feed with guard from Chainlink
 contract PriceFeed is Ownable, IOracle {
     mapping(address => TokenConfig) public tokenConfig;
-    /// @dev This price feed returns price in precision of 10 ^ (30 - token decimals)
     uint256 constant VALUE_PRECISION = 1e30;
     /// @notice token listed, for inspection only
     address[] public whitelistedTokens;
     /// @notice last reported price
+    /// @dev These answers recorded in precision of 10 ^ (30 - token decimals)
     mapping(address => uint256) lastAnswers;
     mapping(address => uint256) lastAnswerTimestamp;
     /// @notice allowed price margin compared to chainlink feed
@@ -32,7 +32,7 @@ contract PriceFeed is Ownable, IOracle {
     uint256 public constant PRICE_LOWER_BOUND = 99e8; // 1%
     uint256 public constant MARGIN_PRECISION = 1e10;
     /// @dev if chainlink is not update in 30 minutes, it's not relevant anymore
-    uint256 public constant PRICE_FEED_TIMEOUT = 1800;
+    uint256 public constant PRICE_FEED_TIMEOUT = 30 minutes;
 
     mapping(address => bool) public isReporter;
     address[] public reporters;
@@ -41,13 +41,11 @@ contract PriceFeed is Ownable, IOracle {
 
     /// @notice report token price
     /// allow some authorized reporters only
+    /// if the reported price is out of bound, the boundary will be used
     function postPrice(address token, uint256 price) external {
         require(isReporter[msg.sender], "PriceFeed:unauthorized");
         TokenConfig memory config = tokenConfig[token];
         require(config.baseUnits > 0, "PriceFeed:tokenNotConfigured");
-        // simply revert if the price is out of allowed boundary and keep the current value
-        // and keep the current value
-
         (, int256 guardPrice, , uint256 updatedAt, ) = config.chainlinkPriceFeed.latestRoundData();
         require(updatedAt + PRICE_FEED_TIMEOUT >= block.timestamp, "PriceFeed:chainlinkStaled");
         uint256 guardPriceDecimals = config.chainlinkPriceFeed.decimals();
@@ -82,9 +80,13 @@ contract PriceFeed is Ownable, IOracle {
 
     function getPrice(address token) external view returns (uint256) {
         require(lastAnswerTimestamp[token] + PRICE_FEED_TIMEOUT >= block.timestamp, "PriceFeed:outOfDate");
-        return lastAnswers[token];
+        uint lastAnswer = lastAnswers[token];
+        require(lastAnswer > 0, "PriceFeed:notAvailable");
+        return lastAnswer;
     }
 
+    /// @notice simply return last answer without any validation, for inspect purpose only
+    /// DONOT use it to compute anything
     function getLastPrice(address token) external view returns (uint256) {
         return lastAnswers[token];
     }

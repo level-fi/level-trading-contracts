@@ -53,7 +53,6 @@ contract OrderManager is Initializable, OwnableUpgradeable, ReentrancyGuardUpgra
     IOracle public oracle;
     uint256 public minExecutionFee;
 
-    address public __positionHook__;
     IOrderHook public orderHook;
 
     receive() external payable {

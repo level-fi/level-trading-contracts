@@ -126,7 +126,7 @@ interface IPool {
     event InterestRateSet(uint256 interestRate, uint256);
     event MaxPositionSizeSet(uint256 maxPositionSize);
     event PositionHookChanged(address hook);
-    event TrancheAdded(address lpToken, uint256 share, uint256 totalShare);
-    event TrancheUpdated(address lpToken, uint256 share, uint256 totalShare);
+    event TrancheAdded(address lpToken);
+    event TokenRiskFactorUpdated(address token);
     event PnLDistributed(address indexed asset, address indexed tranche, uint256 amount, bool hasProfit);
 }

@@ -97,10 +97,11 @@ abstract contract PoolStorage {
     mapping(address => uint256) public targetWeights;
 
     mapping(address => bool) public isTranche;
-
-    mapping(address => uint256) public trancheShares;
-
-    uint256 public totalTrancheShare;
+    /// @notice risk factor of each token in each tranche
+    /// @dev token => tranche => risk factor
+    mapping(address => mapping(address => uint256)) public riskFactor;
+    /// @dev token => total risk score
+    mapping(address => uint256) public totalRiskFactor;
 
     address[] public allTranches;
 
