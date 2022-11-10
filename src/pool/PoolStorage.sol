@@ -106,6 +106,8 @@ abstract contract PoolStorage {
     address[] public allTranches;
 
     mapping(address => mapping(address => AssetInfo)) public trancheAssets;
+    /// @notice position reserve in each tranche
+    mapping(address => mapping(bytes32 => uint256)) public tranchePositionReserves;
 
     /// @notice interest rate model
     uint256 public interestRate;
