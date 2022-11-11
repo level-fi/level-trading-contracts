@@ -29,5 +29,5 @@ library PoolErrors {
     error InvalidTranche(address tranche);
     error TrancheAlreadyAdded(address tranche);
     error RemoveLiquidityTooMuch(address tranche, uint256 outAmount, uint256 trancheBalance);
-    error CannotDistributeToTranches(address token, uint256 amount, uint updateFlag);
+    error CannotDistributeToTranches(address token, uint256 amount, bool CannotDistributeToTranches);
 }
