@@ -1044,11 +1044,16 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
                 SignedIntOps.wrap(collateral.poolAmount).sub(_vars.poolAmountReduced.frac(share, totalShare)).toUint();
 
             if (_side == Side.LONG) {
-                collateral.guaranteedValue = collateral.guaranteedValue
-                    + MathUtils.frac(_vars.collateralReduced, share, totalShare)
-                    - MathUtils.frac(_vars.sizeChanged, share, totalShare);
+                collateral.guaranteedValue =
+                    collateral.guaranteedValue + MathUtils.frac(_vars.collateralReduced, share, totalShare);
+                collateral.guaranteedValue =
+                    collateral.guaranteedValue < MathUtils.frac(_vars.sizeChanged, share, totalShare)
+                    ? 0
+                    : collateral.guaranteedValue - MathUtils.frac(_vars.sizeChanged, share, totalShare);
             } else {
-                indexAsset.totalShortSize -= MathUtils.frac(_vars.sizeChanged, share, totalShare);
+                // fix rounding error when increase total short size
+                indexAsset.totalShortSize =
+                    MathUtils.zeroCapSub(indexAsset.totalShortSize, MathUtils.frac(_vars.sizeChanged, share, totalShare));
             }
             emit PnLDistributed(_collateralToken, tranche, _vars.pnl.frac(share, totalShare).abs, _vars.pnl.isPos());
         }
