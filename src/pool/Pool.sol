@@ -133,7 +133,16 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         return _getTrancheValue(_tranche);
     }
 
+    function calcSwapOutput(address _tokenIn, address _tokenOut, uint256 _amountIn)
+        internal
+        view
+        returns (uint256 amountOut, uint256 feeAmount)
+    {
+        return _calcSwapOutput(_tokenIn, _tokenOut, _amountIn);
+    }
+
     // ============= Mutative functions =============
+
     function addLiquidity(address _tranche, address _token, uint256 _amountIn, uint256 _minLpAmount, address _to)
         external
         payable
@@ -209,13 +218,12 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         if (amountIn == 0) {
             revert PoolErrors.ZeroAmount();
         }
-        (uint256 amountOut, uint256 swapFee) = _calcSwapOutput(_tokenIn, _tokenOut, amountIn);
-        uint256 amountOutAfterFee = amountOut - swapFee;
+        (uint256 amountOutAfterFee, uint256 swapFee) = _calcSwapOutput(_tokenIn, _tokenOut, amountIn);
         if (amountOutAfterFee < _minOut) {
             revert PoolErrors.SlippageExceeded();
         }
-        poolTokens[_tokenOut].feeReserve += swapFee;
-        _rebalanceTranches(_tokenIn, amountIn, _tokenOut, amountOutAfterFee);
+        poolTokens[_tokenIn].feeReserve += swapFee;
+        _rebalanceTranches(_tokenIn, amountIn - swapFee, _tokenOut, amountOutAfterFee);
         _doTransferOut(_tokenOut, _to, amountOutAfterFee);
         emit Swap(msg.sender, _tokenIn, _tokenOut, amountIn, amountOutAfterFee, swapFee);
     }
@@ -672,7 +680,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
     function _calcSwapOutput(address _tokenIn, address _tokenOut, uint256 _amountIn)
         internal
         view
-        returns (uint256 amountOut, uint256 feeAmount)
+        returns (uint256 amountOutAfterFee, uint256 feeAmount)
     {
         uint256 priceIn = _getPrice(_tokenIn);
         uint256 priceOut = _getPrice(_tokenOut);
@@ -682,8 +690,8 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         uint256 feeOut = _calcAdjustedFee(poolValue, _tokenOut, priceOut, valueChange, false);
         uint256 _fee = feeIn > feeOut ? feeIn : feeOut;
 
-        amountOut = valueChange / priceOut;
-        feeAmount = (valueChange * _fee) / priceOut / FEE_PRECISION;
+        amountOutAfterFee = valueChange * (FEE_PRECISION - _fee) / priceOut / FEE_PRECISION;
+        feeAmount = (valueChange * _fee) / priceIn / FEE_PRECISION;
     }
 
     function _getPositionKey(address _owner, address _indexToken, address _collateralToken, Side _side)
@@ -802,11 +810,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         uint256 _tokenPrice,
         uint256 _valueChange,
         bool _isSwapIn
-    )
-        internal
-        view
-        returns (uint256)
-    {
+    ) internal view returns (uint256) {
         if (_poolValue == 0) {
             return 0;
         }
@@ -816,24 +820,19 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
             return 0;
         }
         uint256 nextValue = _isSwapIn ? currentValue + _valueChange : currentValue - _valueChange;
-        (uint256 baseSwapFee, uint256 taxBasisPoint) =
-            isStableCoin[_token]
+        (uint256 baseSwapFee, uint256 taxBasisPoint) = isStableCoin[_token]
             ? (fee.stableCoinBaseSwapFee, fee.stableCoinTaxBasisPoint)
             : (fee.baseSwapFee, fee.taxBasisPoint);
-        return _calcAdjustedFee(targetValue, currentValue, nextValue, baseSwapFee, taxBasisPoint);
+        return _calcFeeRate(targetValue, currentValue, nextValue, baseSwapFee, taxBasisPoint);
     }
 
-    function _calcAdjustedFee(
+    function _calcFeeRate(
         uint256 _targetValue,
         uint256 _currentValue,
         uint256 _nextValue,
         uint256 _baseSwapFee,
         uint256 _taxBasisPoint
-    )
-        internal
-        pure
-        returns (uint256)
-    {
+    ) internal pure returns (uint256) {
         if (_currentValue == 0) {
             return 0;
         } // no fee on initial deposit
@@ -844,33 +843,11 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
             return _baseSwapFee > feeAdjust ? _baseSwapFee - feeAdjust : 0;
         } else {
             uint256 avgDiff = (initDiff + nextDiff) / 2;
-            uint256 feeAdjust =
-                (_targetValue == 0 || avgDiff > _targetValue) ? _taxBasisPoint : (_taxBasisPoint * avgDiff) / _targetValue;
+            uint256 feeAdjust = (_targetValue == 0 || avgDiff > _targetValue)
+                ? _taxBasisPoint
+                : (_taxBasisPoint * avgDiff) / _targetValue;
             return _baseSwapFee + feeAdjust;
         }
-    }
-
-    /// @notice calculate new avg entry price when increase position
-    /// @dev for longs: nextAveragePrice = (nextPrice * nextSize)/ (nextSize + delta)
-    ///      for shorts: nextAveragePrice = (nextPrice * nextSize) / (nextSize - delta)
-    function _calcAveragePrice(
-        Side _side,
-        uint256 _lastSize,
-        uint256 _increasedSize,
-        uint256 _entryPrice,
-        uint256 _nextPrice
-    )
-        internal
-        pure
-        returns (uint256)
-    {
-        if (_lastSize == 0) {
-            return _nextPrice;
-        }
-        SignedInt memory pnl = PositionUtils.calcPnl(_side, _lastSize, _entryPrice, _nextPrice);
-        SignedInt memory nextSize = SignedIntOps.wrap(_lastSize + _increasedSize);
-        SignedInt memory divisor = _side == Side.LONG ? nextSize.add(pnl) : nextSize.sub(pnl);
-        return nextSize.mul(_nextPrice).div(divisor).toUint();
     }
 
     function _getPoolValue() internal view returns (uint256 sum) {
