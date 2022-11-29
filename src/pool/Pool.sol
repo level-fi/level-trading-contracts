@@ -25,7 +25,10 @@ import {
     LP_INITIAL_PRICE,
     MAX_BASE_SWAP_FEE,
     MAX_TAX_BASIS_POINT,
-    MAX_POSITION_FEE
+    MAX_POSITION_FEE,
+    MAX_LIQUIDATION_FEE,
+    MAX_TRANCHES,
+    MAX_INTEREST_RATE
 } from "./PoolStorage.sol";
 import {PoolErrors} from "./PoolErrors.sol";
 import {IPositionHook} from "../interfaces/IPositionHook.sol";
@@ -92,23 +95,12 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         uint256 _liquidationFee,
         uint256 _interestRate,
         uint256 _accrualInterval
-    )
-        external
-        initializer
-    {
+    ) external initializer {
         __Ownable_init();
         __ReentrancyGuard_init();
-        if (_accrualInterval == 0) {
-            revert PoolErrors.InvalidInterval();
-        }
-        if (_maxLeverage == 0) {
-            revert PoolErrors.InvalidMaxLeverage();
-        }
-        maxLeverage = _maxLeverage;
-        fee.positionFee = _positionFee;
-        fee.liquidationFee = _liquidationFee;
-        interestRate = _interestRate;
-        accrualInterval = _accrualInterval;
+        _setMaxLeverage(_maxLeverage);
+        _setPositionFee(_positionFee, _liquidationFee);
+        _setInterestRate(_interestRate, _accrualInterval);
         fee.daoFee = FEE_PRECISION;
     }
 
@@ -420,6 +412,9 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
 
     // ========= ADMIN FUNCTIONS ========
     function addTranche(address _tranche) external onlyOwner {
+        if (allTranches.length >= MAX_TRANCHES) {
+            revert PoolErrors.MaxNumberOfTranchesReached();
+        }
         if (_tranche == address(0)) {
             revert PoolErrors.ZeroAddress();
         }
@@ -473,11 +468,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
     }
 
     function setMaxLeverage(uint256 _maxLeverage) external onlyOwner {
-        if (_maxLeverage == 0) {
-            revert PoolErrors.InvalidMaxLeverage();
-        }
-        maxLeverage = _maxLeverage;
-        emit MaxLeverageChanged(_maxLeverage);
+        _setMaxLeverage(_maxLeverage);
     }
 
     function setOracle(address _oracle) external onlyOwner {
@@ -510,10 +501,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
     }
 
     function setPositionFee(uint256 _positionFee, uint256 _liquidationFee) external onlyOwner {
-        _validateMaxValue(_positionFee, MAX_POSITION_FEE);
-        fee.positionFee = _positionFee;
-        fee.liquidationFee = _liquidationFee;
-        emit PositionFeeSet(_positionFee, _liquidationFee);
+        _setPositionFee(_positionFee, _liquidationFee);
     }
 
     function setDaoFee(uint256 _daoFee) external onlyOwner {
@@ -523,12 +511,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
     }
 
     function setInterestRate(uint256 _interestRate, uint256 _accrualInterval) external onlyOwner {
-        if (_accrualInterval == 0) {
-            revert PoolErrors.InvalidInterval();
-        }
-        interestRate = _interestRate;
-        accrualInterval = _accrualInterval;
-        emit InterestRateSet(_interestRate, _accrualInterval);
+        _setInterestRate(_interestRate, _accrualInterval);
     }
 
     function setOrderManager(address _orderManager) external onlyOwner {
@@ -598,6 +581,31 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
     receive() external payable onlyOrderManager {}
 
     // ======== internal functions =========
+    function _setMaxLeverage(uint256 _maxLeverage) internal {
+        if (_maxLeverage == 0) {
+            revert PoolErrors.InvalidMaxLeverage();
+        }
+        maxLeverage = _maxLeverage;
+        emit MaxLeverageChanged(_maxLeverage);
+    }
+
+    function _setInterestRate(uint256 _interestRate, uint256 _accrualInterval) internal {
+        if (_accrualInterval < 1) {
+            revert PoolErrors.InvalidInterval();
+        }
+        _validateMaxValue(_interestRate, MAX_INTEREST_RATE);
+        interestRate = _interestRate;
+        accrualInterval = _accrualInterval;
+        emit InterestRateSet(_interestRate, _accrualInterval);
+    }
+
+    function _setPositionFee(uint256 _positionFee, uint256 _liquidationFee) internal {
+        _validateMaxValue(_positionFee, MAX_POSITION_FEE);
+        fee.positionFee = _positionFee;
+        fee.liquidationFee = _liquidationFee;
+        emit PositionFeeSet(_positionFee, _liquidationFee);
+    }
+
     function _validateToken(address _indexToken, address _collateralToken, Side _side, bool _isIncrease)
         internal
         view

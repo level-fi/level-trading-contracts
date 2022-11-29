@@ -12,6 +12,9 @@ uint256 constant LP_INITIAL_PRICE = 1e12; // fix to 1$
 uint256 constant MAX_BASE_SWAP_FEE = 1e8; // 1%
 uint256 constant MAX_TAX_BASIS_POINT = 1e8; // 1%
 uint256 constant MAX_POSITION_FEE = 1e8; // 1%
+uint256 constant MAX_LIQUIDATION_FEE = 10e30; // 10$
+uint256 constant MAX_TRANCHES = 3;
+uint256 constant MAX_INTEREST_RATE = 1e7; // 0.1%
 
 struct Fee {
     /// @notice charge when changing position size
