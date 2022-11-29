@@ -2,6 +2,8 @@
 
 pragma solidity 0.8.15;
 
+import {Side} from "../interfaces/IPool.sol";
+
 library PoolErrors {
     error UpdateCauseLiquidation();
     error InvalidTokenPair(address index, address collateral);
@@ -29,5 +31,10 @@ library PoolErrors {
     error InvalidTranche(address tranche);
     error TrancheAlreadyAdded(address tranche);
     error RemoveLiquidityTooMuch(address tranche, uint256 outAmount, uint256 trancheBalance);
-    error CannotDistributeToTranches(address token, uint256 amount, bool CannotDistributeToTranches);
+    error CannotDistributeToTranches(
+        address indexToken, address collateralToken, uint256 amount, bool CannotDistributeToTranches
+    );
+    error CannotSetRiskFactorForStableCoin(address token);
+    error PositionNotExists(address owner, address indexToken, address collateralToken, Side side);
+    error MaxNumberOfTranchesReached();
 }
