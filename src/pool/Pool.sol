@@ -440,6 +440,9 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
     }
 
     function setRiskFactor(address _token, RiskConfig[] memory _config) external onlyOwner onlyAsset(_token) {
+        if (isStableCoin[_token]) {
+            revert PoolErrors.CannotSetRiskFactorForStableCoin(_token);
+        }
         uint256 total = totalRiskFactor[_token];
         for (uint256 i = 0; i < _config.length; i++) {
             (address tranche, uint256 factor) = (_config[i].tranche, _config[i].riskFactor);
@@ -542,7 +545,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
     function reduceDaoFee(address _token, uint256 _amount) public onlyAsset(_token) {
         _validateFeeDistributor();
         _amount = MathUtils.min(_amount, poolTokens[_token].feeReserve);
-        uint256[] memory shares = _calcTrancheSharesAmount(_token, _amount, false);
+        uint256[] memory shares = _calcTrancheSharesAmount(_token, _token, _amount, false);
         for (uint256 i = 0; i < shares.length; i++) {
             address tranche = allTranches[i];
             trancheAssets[tranche][_token].poolAmount += shares[i];
@@ -966,17 +969,15 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         address _indexToken,
         address _collateralToken,
         Side _side
-    )
-        internal
-    {
+    ) internal {
         uint256[] memory shares;
         uint256 totalShare;
         if (_vars.reserveAdded > 0) {
             totalShare = _vars.reserveAdded;
-            shares = _calcTrancheSharesAmount(_collateralToken, _vars.reserveAdded, false);
+            shares = _calcTrancheSharesAmount(_indexToken, _collateralToken, _vars.reserveAdded, false);
         } else {
             totalShare = _vars.collateralAmount;
-            shares = _calcTrancheSharesAmount(_collateralToken, _vars.collateralAmount, true);
+            shares = _calcTrancheSharesAmount(_indexToken, _collateralToken, _vars.collateralAmount, true);
         }
 
         for (uint256 i = 0; i < shares.length; i++) {
@@ -1047,12 +1048,16 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
     }
 
     /// @notice distributed amount of token to all tranches
+    /// @param _indexToken the token of which risk factors is used to calculate ratio
+    /// @param _collateralToken pool amount or reserve of this token will be changed. So we must cap the amount to be changed to the
+    /// max available value of this token (pool amount - reserve) when _isIncreasePoolAmount set to false
     /// @param _isIncreasePoolAmount set to true when "increase pool amount" or "decrease reserve amount"
-    function _calcTrancheSharesAmount(address _token, uint256 _amount, bool _isIncreasePoolAmount)
-        internal
-        view
-        returns (uint256[] memory reserves)
-    {
+    function _calcTrancheSharesAmount(
+        address _indexToken,
+        address _collateralToken,
+        uint256 _amount,
+        bool _isIncreasePoolAmount
+    ) internal view returns (uint256[] memory reserves) {
         uint256 nTranches = allTranches.length;
         reserves = new uint[](nTranches);
         uint256[] memory factors = new uint[](nTranches);
@@ -1060,12 +1065,12 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
 
         for (uint256 i = 0; i < nTranches; i++) {
             address tranche = allTranches[i];
-            AssetInfo memory asset = trancheAssets[tranche][_token];
-            factors[i] = riskFactor[_token][tranche];
+            AssetInfo memory asset = trancheAssets[tranche][_collateralToken];
+            factors[i] = isStableCoin[_indexToken] ? 1 : riskFactor[_indexToken][tranche];
             maxShare[i] = _isIncreasePoolAmount ? type(uint256).max : asset.poolAmount - asset.reservedAmount;
         }
 
-        uint256 totalFactor = totalRiskFactor[_token];
+        uint256 totalFactor = isStableCoin[_indexToken] ? nTranches : totalRiskFactor[_indexToken];
 
         for (uint256 k = 0; k < nTranches; k++) {
             uint256 remaining = _amount; // amount distributed in this round
@@ -1093,24 +1098,30 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         }
 
         if (_amount > 0) {
-            revert PoolErrors.CannotDistributeToTranches(_token, _amount, _isIncreasePoolAmount);
+            revert PoolErrors.CannotDistributeToTranches(_indexToken, _collateralToken, _amount, _isIncreasePoolAmount);
         }
     }
 
     /// @notice rebalance fund between tranches after swap token
     function _rebalanceTranches(address _tokenIn, uint256 _amountIn, address _tokenOut, uint256 _amountOut) internal {
-        uint256[] memory shares;
-        shares = _calcTrancheSharesAmount(_tokenIn, _amountIn, true);
-        for (uint256 i = 0; i < shares.length; i++) {
-            address tranche = allTranches[i];
-            trancheAssets[tranche][_tokenIn].poolAmount += shares[i];
+        // amount devided to each tranche
+        uint256[] memory inAmounts;
+        uint256[] memory outAmounts;
+
+        if (!isStableCoin[_tokenIn] && isStableCoin[_tokenOut]) {
+            // use token in as index
+            inAmounts = _calcTrancheSharesAmount(_tokenIn, _tokenIn, _amountIn, true);
+            outAmounts = _calcTrancheSharesAmount(_tokenIn, _tokenOut, _amountOut, false);
+        } else {
+            // use token out as index
+            inAmounts = _calcTrancheSharesAmount(_tokenOut, _tokenIn, _amountIn, true);
+            outAmounts = _calcTrancheSharesAmount(_tokenOut, _tokenOut, _amountOut, false);
         }
 
-        shares = _calcTrancheSharesAmount(_tokenOut, _amountOut, false);
-        for (uint256 i = 0; i < shares.length; i++) {
+        for (uint256 i = 0; i < allTranches.length; i++) {
             address tranche = allTranches[i];
-            // always safe
-            trancheAssets[tranche][_tokenOut].poolAmount -= shares[i];
+            trancheAssets[tranche][_tokenIn].poolAmount += inAmounts[i];
+            trancheAssets[tranche][_tokenOut].poolAmount -= outAmounts[i];
         }
     }
 
