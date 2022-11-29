@@ -20,7 +20,7 @@ library SignedIntOps {
         }
 
         if (a.abs == b.abs) {
-            return SignedInt(0, 0); // always return positive zero
+            return SignedInt(POS, 0); // always return positive zero
         }
 
         (uint256 sig, uint256 abs) = a.abs > b.abs ? (a.sig, a.abs - b.abs) : (b.sig, b.abs - a.abs);
@@ -92,28 +92,8 @@ library SignedIntOps {
         return a.abs;
     }
 
-    function lt(SignedInt memory a, SignedInt memory b) internal pure returns (bool) {
-        return a.sig > b.sig || a.abs < b.abs;
-    }
-
-    function lt(SignedInt memory a, uint256 b) internal pure returns (bool) {
-        return a.sig == NEG || a.abs < b;
-    }
-
-    function lt(SignedInt memory a, int256 b) internal pure returns (bool) {
-        return lt(a, wrap(b));
-    }
-
-    function gt(SignedInt memory a, SignedInt memory b) internal pure returns (bool) {
-        return a.sig < b.sig || a.abs > b.abs;
-    }
-
-    function gt(SignedInt memory a, int256 b) internal pure returns (bool) {
-        return b < 0 || a.abs > uint256(b);
-    }
-
     function gt(SignedInt memory a, uint256 b) internal pure returns (bool) {
-        return lt(a, wrap(b));
+        return a.sig == POS && a.abs > b;
     }
 
     function isNeg(SignedInt memory a) internal pure returns (bool) {
@@ -122,18 +102,6 @@ library SignedIntOps {
 
     function isPos(SignedInt memory a) internal pure returns (bool) {
         return a.sig == POS;
-    }
-
-    function eq(SignedInt memory a, SignedInt memory b) internal pure returns (bool) {
-        return a.abs == b.abs && a.sig == b.sig;
-    }
-
-    function eq(SignedInt memory a, uint256 b) internal pure returns (bool) {
-        return eq(a, wrap(b));
-    }
-
-    function eq(SignedInt memory a, int256 b) internal pure returns (bool) {
-        return eq(a, wrap(b));
     }
 
     function frac(SignedInt memory a, uint256 num, uint256 denom) internal pure returns (SignedInt memory) {

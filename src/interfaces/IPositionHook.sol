@@ -8,7 +8,6 @@ interface IPositionHook {
         address indexToken,
         address collateralToken,
         Side side,
-        uint256 sizeChange,
         bytes calldata extradata
     ) external;
 
@@ -17,7 +16,6 @@ interface IPositionHook {
         address indexToken,
         address collateralToken,
         Side side,
-        uint256 sizeChange,
         bytes calldata extradata
     ) external;
 
@@ -26,7 +24,6 @@ interface IPositionHook {
         address indexToken,
         address collateralToken,
         Side side,
-        uint256 sizeChange,
         bytes calldata extradata
     ) external;
 
@@ -35,44 +32,41 @@ interface IPositionHook {
         address indexToken,
         address collateralToken,
         Side side,
-        uint256 sizeChange,
+        bytes calldata extradata
+    ) external;
+
+    function preLiquidatePosition(
+        address owner,
+        address indexToken,
+        address collateralToken,
+        Side side,
+        bytes calldata extradata
+    ) external;
+
+    function postLiquidatePosition(
+        address owner,
+        address indexToken,
+        address collateralToken,
+        Side side,
         bytes calldata extradata
     ) external;
 
     event PreIncreasePositionExecuted(
-        address pool,
-        address owner,
-        address indexToken,
-        address collateralToken,
-        Side side,
-        uint256 sizeChange,
-        bytes extradata
+        address pool, address owner, address indexToken, address collateralToken, Side side, bytes extradata
     );
     event PostIncreasePositionExecuted(
-        address pool,
-        address owner,
-        address indexToken,
-        address collateralToken,
-        Side side,
-        uint256 sizeChange,
-        bytes extradata
+        address pool, address owner, address indexToken, address collateralToken, Side side, bytes extradata
     );
     event PreDecreasePositionExecuted(
-        address pool,
-        address owner,
-        address indexToken,
-        address collateralToken,
-        Side side,
-        uint256 sizeChange,
-        bytes extradata
+        address pool, address owner, address indexToken, address collateralToken, Side side, bytes extradata
     );
     event PostDecreasePositionExecuted(
-        address pool,
-        address owner,
-        address indexToken,
-        address collateralToken,
-        Side side,
-        uint256 sizeChange,
-        bytes extradata
+        address pool, address owner, address indexToken, address collateralToken, Side side, bytes extradata
+    );
+    event PreLiquidatePositionExecuted(
+        address pool, address owner, address indexToken, address collateralToken, Side side, bytes extradata
+    );
+    event PostLiquidatePositionExecuted(
+        address pool, address owner, address indexToken, address collateralToken, Side side, bytes extradata
     );
 }

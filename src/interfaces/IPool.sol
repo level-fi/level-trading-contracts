@@ -21,8 +21,7 @@ interface IPool {
         address _collateralToken,
         uint256 _sizeChanged,
         Side _side
-    )
-        external;
+    ) external;
 
     function decreasePosition(
         address _account,
@@ -32,8 +31,7 @@ interface IPool {
         uint256 _sizeChanged,
         Side _side,
         address _receiver
-    )
-        external;
+    ) external;
 
     function liquidatePosition(address _account, address _indexToken, address _collateralToken, Side _side) external;
 
@@ -45,8 +43,10 @@ interface IPool {
     function swap(address _tokenIn, address _tokenOut, uint256 _minOut, address _to) external;
 
     function addLiquidity(address _tranche, address _token, uint256 _amountIn, uint256 _minLpAmount, address _to)
-        external
-        payable;
+        external;
+
+    function removeLiquidity(address _tranche, address _tokenOut, uint256 _lpAmount, uint256 _minOut, address _to)
+        external;
 
     // =========== EVENTS ===========
     event SetOrderManager(address orderManager);
@@ -122,6 +122,7 @@ interface IPool {
     event InterestAccrued(address token, uint256 borrowIndex);
     event MaxLeverageChanged(uint256 maxLeverage);
     event TokenWhitelisted(address token);
+    event TokenDelisted(address token);
     event OracleChanged(address oldOracle, address newOracle);
     event InterestRateSet(uint256 interestRate, uint256);
     event MaxPositionSizeSet(uint256 maxPositionSize);

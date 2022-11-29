@@ -8,7 +8,6 @@ import {SafeERC20, IERC20} from "openzeppelin/token/ERC20/utils/SafeERC20.sol";
 import {Initializable} from "openzeppelin-upgradeable/proxy/utils/Initializable.sol";
 import {ERC20} from "openzeppelin/token/ERC20/ERC20.sol";
 import {SignedInt, SignedIntOps} from "../lib/SignedInt.sol";
-import {UniERC20} from "../lib/UniERC20.sol";
 import {MathUtils} from "../lib/MathUtils.sol";
 import {PositionUtils} from "../lib/PositionUtils.sol";
 import {IOracle} from "../interfaces/IOracle.sol";
@@ -25,7 +24,10 @@ import {
     LP_INITIAL_PRICE,
     MAX_BASE_SWAP_FEE,
     MAX_TAX_BASIS_POINT,
-    MAX_POSITION_FEE
+    MAX_POSITION_FEE,
+    MAX_LIQUIDATION_FEE,
+    MAX_TRANCHES,
+    MAX_INTEREST_RATE
 } from "./PoolStorage.sol";
 import {PoolErrors} from "./PoolErrors.sol";
 import {IPositionHook} from "../interfaces/IPositionHook.sol";
@@ -66,7 +68,6 @@ struct DecreasePositionVars {
 
 contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuardUpgradeable, IPool {
     using SignedIntOps for SignedInt;
-    using UniERC20 for IERC20;
     using SafeERC20 for IERC20;
 
     /* =========== MODIFIERS ========== */
@@ -92,23 +93,12 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         uint256 _liquidationFee,
         uint256 _interestRate,
         uint256 _accrualInterval
-    )
-        external
-        initializer
-    {
+    ) external initializer {
         __Ownable_init();
         __ReentrancyGuard_init();
-        if (_accrualInterval == 0) {
-            revert PoolErrors.InvalidInterval();
-        }
-        if (_maxLeverage == 0) {
-            revert PoolErrors.InvalidMaxLeverage();
-        }
-        maxLeverage = _maxLeverage;
-        fee.positionFee = _positionFee;
-        fee.liquidationFee = _liquidationFee;
-        interestRate = _interestRate;
-        accrualInterval = _accrualInterval;
+        _setMaxLeverage(_maxLeverage);
+        _setPositionFee(_positionFee, _liquidationFee);
+        _setInterestRate(_interestRate, _accrualInterval);
         fee.daoFee = FEE_PRECISION;
     }
 
@@ -141,10 +131,18 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         return _getTrancheValue(_tranche);
     }
 
+    function calcSwapOutput(address _tokenIn, address _tokenOut, uint256 _amountIn)
+        internal
+        view
+        returns (uint256 amountOut, uint256 feeAmount)
+    {
+        return _calcSwapOutput(_tokenIn, _tokenOut, _amountIn);
+    }
+
     // ============= Mutative functions =============
+
     function addLiquidity(address _tranche, address _token, uint256 _amountIn, uint256 _minLpAmount, address _to)
         external
-        payable
         nonReentrant
         onlyListedToken(_token)
     {
@@ -217,13 +215,12 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         if (amountIn == 0) {
             revert PoolErrors.ZeroAmount();
         }
-        (uint256 amountOut, uint256 swapFee) = _calcSwapOutput(_tokenIn, _tokenOut, amountIn);
-        uint256 amountOutAfterFee = amountOut - swapFee;
+        (uint256 amountOutAfterFee, uint256 swapFee) = _calcSwapOutput(_tokenIn, _tokenOut, amountIn);
         if (amountOutAfterFee < _minOut) {
             revert PoolErrors.SlippageExceeded();
         }
-        poolTokens[_tokenOut].feeReserve += swapFee;
-        _rebalanceTranches(_tokenIn, amountIn, _tokenOut, amountOutAfterFee);
+        poolTokens[_tokenIn].feeReserve += swapFee;
+        _rebalanceTranches(_tokenIn, amountIn - swapFee, _tokenOut, amountOutAfterFee);
         _doTransferOut(_tokenOut, _to, amountOutAfterFee);
         emit Swap(msg.sender, _tokenIn, _tokenOut, amountIn, amountOutAfterFee, swapFee);
     }
@@ -234,25 +231,24 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         address _collateralToken,
         uint256 _sizeChanged,
         Side _side
-    )
-        external
-        onlyOrderManager
-    {
+    ) external onlyOrderManager {
         _requireValidTokenPair(_indexToken, _collateralToken, _side, true);
-        if (address(positionHook) != address(0)) {
-            positionHook.preIncreasePosition(_owner, _indexToken, _collateralToken, _side, _sizeChanged, bytes(""));
-        }
-        uint256 borrowIndex = _accrueInterest(_collateralToken);
         IncreasePositionVars memory vars;
-        bytes32 key = _getPositionKey(_owner, _indexToken, _collateralToken, _side);
-        Position memory position = positions[key];
-        uint256 collateralPrice = _getPrice(_collateralToken);
-        vars.indexPrice = _getPrice(_indexToken);
         vars.collateralAmount = _getAmountIn(_collateralToken);
         if (vars.collateralAmount == 0) {
             revert PoolErrors.ZeroAmount();
         }
+        uint256 collateralPrice = _getPrice(_collateralToken);
         vars.collateralValueAdded = collateralPrice * vars.collateralAmount;
+        if (address(positionHook) != address(0)) {
+            positionHook.preIncreasePosition(
+                _owner, _indexToken, _collateralToken, _side, abi.encode(_sizeChanged, vars.collateralValueAdded)
+            );
+        }
+        uint256 borrowIndex = _accrueInterest(_collateralToken);
+        bytes32 key = _getPositionKey(_owner, _indexToken, _collateralToken, _side);
+        Position memory position = positions[key];
+        vars.indexPrice = _getPrice(_indexToken);
         vars.sizeChanged = _sizeChanged;
 
         // update position
@@ -260,7 +256,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         vars.daoFee = vars.feeValue * fee.daoFee / collateralPrice / FEE_PRECISION;
         vars.reserveAdded = vars.sizeChanged / collateralPrice;
         position.entryPrice =
-            _calcAveragePrice(_side, position.size, vars.sizeChanged, position.entryPrice, vars.indexPrice);
+            PositionUtils.calcAveragePrice(_side, position.size, vars.sizeChanged, position.entryPrice, vars.indexPrice);
         position.collateralValue =
             MathUtils.zeroCapSub(position.collateralValue + vars.collateralValueAdded, vars.feeValue);
         position.size = position.size + vars.sizeChanged;
@@ -296,7 +292,9 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
             );
 
         if (address(positionHook) != address(0)) {
-            positionHook.postIncreasePosition(_owner, _indexToken, _collateralToken, _side, _sizeChanged, bytes(""));
+            positionHook.postIncreasePosition(
+                _owner, _indexToken, _collateralToken, _side, abi.encode(_sizeChanged, vars.collateralValueAdded)
+            );
         }
     }
 
@@ -308,28 +306,31 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         uint256 _sizeChanged,
         Side _side,
         address _receiver
-    )
-        external
-        onlyOrderManager
-    {
+    ) external onlyOrderManager {
         _requireValidTokenPair(_indexToken, _collateralToken, _side, false);
         uint256 borrowIndex = _accrueInterest(_collateralToken);
         bytes32 key = _getPositionKey(_owner, _indexToken, _collateralToken, _side);
         Position memory position = positions[key];
 
-        if (address(positionHook) != address(0)) {
-            positionHook.preDecreasePosition(_owner, _indexToken, _collateralToken, _side, _sizeChanged, bytes(""));
+        if (position.size == 0) {
+            revert PoolErrors.PositionNotExists(_owner, _indexToken, _collateralToken, _side);
         }
 
         DecreasePositionVars memory vars =
             _calcDecreasePayout(position, _indexToken, _collateralToken, _side, _sizeChanged, _collateralChanged);
 
+        if (address(positionHook) != address(0)) {
+            positionHook.preDecreasePosition(
+                _owner, _indexToken, _collateralToken, _side, abi.encode(_sizeChanged, vars.collateralReduced)
+            );
+        }
+
+        vars.collateralReduced = position.collateralValue - vars.remainingCollateral;
         _releasePoolAsset(key, vars, _indexToken, _collateralToken, _side);
         position.size = position.size - vars.sizeChanged;
         position.borrowIndex = borrowIndex;
         position.reserveAmount = position.reserveAmount - vars.reserveReduced;
         // reset to actual reduced value instead of user input
-        vars.collateralReduced = position.collateralValue - vars.remainingCollateral;
         position.collateralValue = vars.remainingCollateral;
 
         _validatePosition(position, _collateralToken, _side, false, vars.indexPrice);
@@ -372,24 +373,30 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         _doTransferOut(_collateralToken, _receiver, vars.payout);
 
         if (address(positionHook) != address(0)) {
-            positionHook.postDecreasePosition(_owner, _indexToken, _collateralToken, _side, _sizeChanged, bytes(""));
+            positionHook.postDecreasePosition(
+                _owner, _indexToken, _collateralToken, _side, abi.encode(_sizeChanged, vars.collateralReduced)
+            );
         }
     }
 
     function liquidatePosition(address _account, address _indexToken, address _collateralToken, Side _side) external {
         _requireValidTokenPair(_indexToken, _collateralToken, _side, false);
-        _accrueInterest(_collateralToken);
+        uint256 borrowIndex = _accrueInterest(_collateralToken);
+
         bytes32 key = _getPositionKey(_account, _indexToken, _collateralToken, _side);
         Position memory position = positions[key];
-        if (address(positionHook) != address(0)) {
-            positionHook.preDecreasePosition(_account, _indexToken, _collateralToken, _side, position.size, bytes(""));
+        if (!_liquidatePositionAllowed(position, _side, oracle.getPrice(_indexToken), borrowIndex)) {
+            revert PoolErrors.PositionNotLiquidated(key);
         }
+        if (address(positionHook) != address(0)) {
+            positionHook.preLiquidatePosition(
+                _account, _indexToken, _collateralToken, _side, abi.encode(position.size, position.collateralValue)
+            );
+        }
+
         DecreasePositionVars memory vars =
             _calcDecreasePayout(position, _indexToken, _collateralToken, _side, position.size, position.collateralValue);
 
-        if (vars.remainingCollateral > fee.liquidationFee) {
-            revert PoolErrors.PositionNotLiquidated(key);
-        }
         uint256 liquidationFee = fee.liquidationFee / vars.collateralPrice;
         vars.poolAmountReduced = vars.poolAmountReduced.add(liquidationFee);
         _releasePoolAsset(key, vars, _indexToken, _collateralToken, _side);
@@ -412,12 +419,17 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         _doTransferOut(_collateralToken, msg.sender, liquidationFee);
 
         if (address(positionHook) != address(0)) {
-            positionHook.postDecreasePosition(_account, _indexToken, _collateralToken, _side, position.size, bytes(""));
+            positionHook.postLiquidatePosition(
+                _account, _indexToken, _collateralToken, _side, abi.encode(position.size, position.collateralValue)
+            );
         }
     }
 
     // ========= ADMIN FUNCTIONS ========
     function addTranche(address _tranche) external onlyOwner {
+        if (allTranches.length >= MAX_TRANCHES) {
+            revert PoolErrors.MaxNumberOfTranchesReached();
+        }
         if (_tranche == address(0)) {
             revert PoolErrors.ZeroAddress();
         }
@@ -435,6 +447,9 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
     }
 
     function setRiskFactor(address _token, RiskConfig[] memory _config) external onlyOwner onlyAsset(_token) {
+        if (isStableCoin[_token]) {
+            revert PoolErrors.CannotSetRiskFactorForStableCoin(_token);
+        }
         uint256 total = totalRiskFactor[_token];
         for (uint256 i = 0; i < _config.length; i++) {
             (address tranche, uint256 factor) = (_config[i].tranche, _config[i].riskFactor);
@@ -449,13 +464,21 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
     }
 
     function addToken(address _token, bool _isStableCoin) external onlyOwner {
-        if (isAsset[_token]) {
+        if (!isAsset[_token]) {
+            isAsset[_token] = true;
+            isListed[_token] = true;
+            allAssets.push(_token);
+            isStableCoin[_token] = _isStableCoin;
+            emit TokenWhitelisted(_token);
+            return;
+        }
+
+        if (isListed[_token]) {
             revert PoolErrors.DuplicateToken(_token);
         }
-        isAsset[_token] = true;
+
+        // token is added but not listed
         isListed[_token] = true;
-        allAssets.push(_token);
-        isStableCoin[_token] = _isStableCoin;
         emit TokenWhitelisted(_token);
     }
 
@@ -467,15 +490,11 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         uint256 weight = targetWeights[_token];
         totalWeight -= weight;
         targetWeights[_token] = 0;
-        emit TokenWhitelisted(_token);
+        emit TokenDelisted(_token);
     }
 
     function setMaxLeverage(uint256 _maxLeverage) external onlyOwner {
-        if (_maxLeverage == 0) {
-            revert PoolErrors.InvalidMaxLeverage();
-        }
-        maxLeverage = _maxLeverage;
-        emit MaxLeverageChanged(_maxLeverage);
+        _setMaxLeverage(_maxLeverage);
     }
 
     function setOracle(address _oracle) external onlyOwner {
@@ -492,10 +511,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         uint256 _taxBasisPoint,
         uint256 _stableCoinBaseSwapFee,
         uint256 _stableCoinTaxBasisPoint
-    )
-        external
-        onlyOwner
-    {
+    ) external onlyOwner {
         _validateMaxValue(_baseSwapFee, MAX_BASE_SWAP_FEE);
         _validateMaxValue(_stableCoinBaseSwapFee, MAX_BASE_SWAP_FEE);
         _validateMaxValue(_taxBasisPoint, MAX_TAX_BASIS_POINT);
@@ -508,10 +524,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
     }
 
     function setPositionFee(uint256 _positionFee, uint256 _liquidationFee) external onlyOwner {
-        _validateMaxValue(_positionFee, MAX_POSITION_FEE);
-        fee.positionFee = _positionFee;
-        fee.liquidationFee = _liquidationFee;
-        emit PositionFeeSet(_positionFee, _liquidationFee);
+        _setPositionFee(_positionFee, _liquidationFee);
     }
 
     function setDaoFee(uint256 _daoFee) external onlyOwner {
@@ -521,12 +534,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
     }
 
     function setInterestRate(uint256 _interestRate, uint256 _accrualInterval) external onlyOwner {
-        if (_accrualInterval == 0) {
-            revert PoolErrors.InvalidInterval();
-        }
-        interestRate = _interestRate;
-        accrualInterval = _accrualInterval;
-        emit InterestRateSet(_interestRate, _accrualInterval);
+        _setInterestRate(_interestRate, _accrualInterval);
     }
 
     function setOrderManager(address _orderManager) external onlyOwner {
@@ -549,7 +557,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
     function reduceDaoFee(address _token, uint256 _amount) public onlyAsset(_token) {
         _validateFeeDistributor();
         _amount = MathUtils.min(_amount, poolTokens[_token].feeReserve);
-        uint256[] memory shares = _calcTrancheSharesAmount(_token, _amount, false);
+        uint256[] memory shares = _calcTrancheSharesAmount(_token, _token, _amount, false);
         for (uint256 i = 0; i < shares.length; i++) {
             address tranche = allTranches[i];
             trancheAssets[tranche][_token].poolAmount += shares[i];
@@ -593,9 +601,32 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         emit PositionHookChanged(_hook);
     }
 
-    receive() external payable onlyOrderManager {}
-
     // ======== internal functions =========
+    function _setMaxLeverage(uint256 _maxLeverage) internal {
+        if (_maxLeverage == 0) {
+            revert PoolErrors.InvalidMaxLeverage();
+        }
+        maxLeverage = _maxLeverage;
+        emit MaxLeverageChanged(_maxLeverage);
+    }
+
+    function _setInterestRate(uint256 _interestRate, uint256 _accrualInterval) internal {
+        if (_accrualInterval < 1) {
+            revert PoolErrors.InvalidInterval();
+        }
+        _validateMaxValue(_interestRate, MAX_INTEREST_RATE);
+        interestRate = _interestRate;
+        accrualInterval = _accrualInterval;
+        emit InterestRateSet(_interestRate, _accrualInterval);
+    }
+
+    function _setPositionFee(uint256 _positionFee, uint256 _liquidationFee) internal {
+        _validateMaxValue(_positionFee, MAX_POSITION_FEE);
+        fee.positionFee = _positionFee;
+        fee.liquidationFee = _liquidationFee;
+        emit PositionFeeSet(_positionFee, _liquidationFee);
+    }
+
     function _validateToken(address _indexToken, address _collateralToken, Side _side, bool _isIncrease)
         internal
         view
@@ -651,18 +682,14 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
     }
 
     function _transferIn(address _token, uint256 _amount) internal returns (uint256) {
-        if (_token != UniERC20.ETH) {
-            IERC20(_token).safeTransferFrom(msg.sender, address(this), _amount);
-        } else if (msg.value != _amount) {
-            revert PoolErrors.InvalidTransferInAmount(_amount, msg.value);
-        }
+        IERC20(_token).safeTransferFrom(msg.sender, address(this), _amount);
         return _getAmountIn(_token);
     }
 
     function _calcSwapOutput(address _tokenIn, address _tokenOut, uint256 _amountIn)
         internal
         view
-        returns (uint256 amountOut, uint256 feeAmount)
+        returns (uint256 amountOutAfterFee, uint256 feeAmount)
     {
         uint256 priceIn = _getPrice(_tokenIn);
         uint256 priceOut = _getPrice(_tokenOut);
@@ -672,8 +699,8 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         uint256 feeOut = _calcAdjustedFee(poolValue, _tokenOut, priceOut, valueChange, false);
         uint256 _fee = feeIn > feeOut ? feeIn : feeOut;
 
-        amountOut = valueChange / priceOut;
-        feeAmount = (valueChange * _fee) / priceOut / FEE_PRECISION;
+        amountOutAfterFee = valueChange * (FEE_PRECISION - _fee) / priceOut / FEE_PRECISION;
+        feeAmount = (valueChange * _fee) / priceIn / FEE_PRECISION;
     }
 
     function _getPositionKey(address _owner, address _indexToken, address _collateralToken, Side _side)
@@ -690,10 +717,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         Side _side,
         bool _isIncrease,
         uint256 _indexPrice
-    )
-        internal
-        view
-    {
+    ) internal view {
         if ((_isIncrease && _position.size == 0) || (maxPositionSize > 0 && _position.size > maxPositionSize)) {
             revert PoolErrors.InvalidPositionSize();
         }
@@ -747,7 +771,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
     }
 
     function _getAmountIn(address _token) internal returns (uint256 amount) {
-        uint256 balance = IERC20(_token).getBalance(address(this));
+        uint256 balance = IERC20(_token).balanceOf(address(this));
         amount = balance - poolTokens[_token].poolBalance;
         poolTokens[_token].poolBalance = balance;
     }
@@ -755,8 +779,8 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
     function _doTransferOut(address _token, address _to, uint256 _amount) internal {
         if (_amount > 0) {
             IERC20 token = IERC20(_token);
-            token.transferTo(_to, _amount);
-            poolTokens[_token].poolBalance = token.getBalance(address(this));
+            token.safeTransfer(_to, _amount);
+            poolTokens[_token].poolBalance = token.balanceOf(address(this));
         }
     }
 
@@ -764,8 +788,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         PoolTokenInfo memory tokenInfo = poolTokens[_token];
         AssetInfo memory asset = _getPoolAsset(_token);
         uint256 _now = block.timestamp;
-        if (tokenInfo.lastAccrualTimestamp == 0) {
-            // accrue interest for the first time
+        if (tokenInfo.lastAccrualTimestamp == 0 || asset.poolAmount == 0) {
             tokenInfo.lastAccrualTimestamp = (_now / accrualInterval) * accrualInterval;
         } else {
             uint256 nInterval = (_now - tokenInfo.lastAccrualTimestamp) / accrualInterval;
@@ -792,11 +815,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         uint256 _tokenPrice,
         uint256 _valueChange,
         bool _isSwapIn
-    )
-        internal
-        view
-        returns (uint256)
-    {
+    ) internal view returns (uint256) {
         if (_poolValue == 0) {
             return 0;
         }
@@ -806,24 +825,19 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
             return 0;
         }
         uint256 nextValue = _isSwapIn ? currentValue + _valueChange : currentValue - _valueChange;
-        (uint256 baseSwapFee, uint256 taxBasisPoint) =
-            isStableCoin[_token]
+        (uint256 baseSwapFee, uint256 taxBasisPoint) = isStableCoin[_token]
             ? (fee.stableCoinBaseSwapFee, fee.stableCoinTaxBasisPoint)
             : (fee.baseSwapFee, fee.taxBasisPoint);
-        return _calcAdjustedFee(targetValue, currentValue, nextValue, baseSwapFee, taxBasisPoint);
+        return _calcFeeRate(targetValue, currentValue, nextValue, baseSwapFee, taxBasisPoint);
     }
 
-    function _calcAdjustedFee(
+    function _calcFeeRate(
         uint256 _targetValue,
         uint256 _currentValue,
         uint256 _nextValue,
         uint256 _baseSwapFee,
         uint256 _taxBasisPoint
-    )
-        internal
-        pure
-        returns (uint256)
-    {
+    ) internal pure returns (uint256) {
         if (_currentValue == 0) {
             return 0;
         } // no fee on initial deposit
@@ -834,33 +848,11 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
             return _baseSwapFee > feeAdjust ? _baseSwapFee - feeAdjust : 0;
         } else {
             uint256 avgDiff = (initDiff + nextDiff) / 2;
-            uint256 feeAdjust =
-                (_targetValue == 0 || avgDiff > _targetValue) ? _taxBasisPoint : (_taxBasisPoint * avgDiff) / _targetValue;
+            uint256 feeAdjust = (_targetValue == 0 || avgDiff > _targetValue)
+                ? _taxBasisPoint
+                : (_taxBasisPoint * avgDiff) / _targetValue;
             return _baseSwapFee + feeAdjust;
         }
-    }
-
-    /// @notice calculate new avg entry price when increase position
-    /// @dev for longs: nextAveragePrice = (nextPrice * nextSize)/ (nextSize + delta)
-    ///      for shorts: nextAveragePrice = (nextPrice * nextSize) / (nextSize - delta)
-    function _calcAveragePrice(
-        Side _side,
-        uint256 _lastSize,
-        uint256 _increasedSize,
-        uint256 _entryPrice,
-        uint256 _nextPrice
-    )
-        internal
-        pure
-        returns (uint256)
-    {
-        if (_lastSize == 0) {
-            return _nextPrice;
-        }
-        SignedInt memory pnl = PositionUtils.calcPnl(_side, _lastSize, _entryPrice, _nextPrice);
-        SignedInt memory nextSize = SignedIntOps.wrap(_lastSize + _increasedSize);
-        SignedInt memory divisor = _side == Side.LONG ? nextSize.add(pnl) : nextSize.sub(pnl);
-        return nextSize.mul(_nextPrice).div(divisor).toUint();
     }
 
     function _getPoolValue() internal view returns (uint256 sum) {
@@ -895,8 +887,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         returns (SignedInt memory aum)
     {
         uint256 averageShortPrice = poolTokens[_token].averageShortPrice;
-        SignedInt memory shortPnl =
-            _asset.totalShortSize == 0
+        SignedInt memory shortPnl = _asset.totalShortSize == 0
             ? SignedIntOps.wrap(uint256(0))
             : SignedIntOps.wrap(averageShortPrice).sub(_price).mul(_asset.totalShortSize).div(averageShortPrice);
 
@@ -931,9 +922,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         address _indexToken,
         address _collateralToken,
         Side _side
-    )
-        internal
-    {
+    ) internal {
         AssetInfo memory collateral = _getPoolAsset(_collateralToken);
         AssetInfo memory indexAsset = _getPoolAsset(_indexToken);
 
@@ -949,7 +938,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
             uint256 lastSize = indexAsset.totalShortSize;
             uint256 entryPrice = poolTokens[_indexToken].averageShortPrice;
             poolTokens[_indexToken].averageShortPrice =
-                _calcAveragePrice(Side.SHORT, lastSize, _vars.sizeChanged, entryPrice, _vars.indexPrice);
+                PositionUtils.calcAveragePrice(Side.SHORT, lastSize, _vars.sizeChanged, entryPrice, _vars.indexPrice);
         }
     }
 
@@ -960,9 +949,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         address _indexToken,
         address _collateralToken,
         Side _side
-    )
-        internal
-    {
+    ) internal {
         AssetInfo memory collateral = _getPoolAsset(_collateralToken);
 
         if (collateral.reservedAmount < _vars.reserveReduced) {
@@ -979,17 +966,15 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         address _indexToken,
         address _collateralToken,
         Side _side
-    )
-        internal
-    {
+    ) internal {
         uint256[] memory shares;
         uint256 totalShare;
         if (_vars.reserveAdded > 0) {
             totalShare = _vars.reserveAdded;
-            shares = _calcTrancheSharesAmount(_collateralToken, _vars.reserveAdded, false);
+            shares = _calcTrancheSharesAmount(_indexToken, _collateralToken, _vars.reserveAdded, false);
         } else {
             totalShare = _vars.collateralAmount;
-            shares = _calcTrancheSharesAmount(_collateralToken, _vars.collateralAmount, true);
+            shares = _calcTrancheSharesAmount(_indexToken, _collateralToken, _vars.collateralAmount, true);
         }
 
         for (uint256 i = 0; i < shares.length; i++) {
@@ -1024,9 +1009,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         address _indexToken,
         address _collateralToken,
         Side _side
-    )
-        internal
-    {
+    ) internal {
         uint256 totalShare = positions[_key].reserveAmount;
 
         for (uint256 i = 0; i < allTranches.length; i++) {
@@ -1046,26 +1029,31 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
             if (_side == Side.LONG) {
                 collateral.guaranteedValue =
                     collateral.guaranteedValue + MathUtils.frac(_vars.collateralReduced, share, totalShare);
-                collateral.guaranteedValue =
-                    collateral.guaranteedValue < MathUtils.frac(_vars.sizeChanged, share, totalShare)
+                collateral.guaranteedValue = collateral.guaranteedValue
+                    < MathUtils.frac(_vars.sizeChanged, share, totalShare)
                     ? 0
                     : collateral.guaranteedValue - MathUtils.frac(_vars.sizeChanged, share, totalShare);
             } else {
                 // fix rounding error when increase total short size
-                indexAsset.totalShortSize =
-                    MathUtils.zeroCapSub(indexAsset.totalShortSize, MathUtils.frac(_vars.sizeChanged, share, totalShare));
+                indexAsset.totalShortSize = MathUtils.zeroCapSub(
+                    indexAsset.totalShortSize, MathUtils.frac(_vars.sizeChanged, share, totalShare)
+                );
             }
             emit PnLDistributed(_collateralToken, tranche, _vars.pnl.frac(share, totalShare).abs, _vars.pnl.isPos());
         }
     }
 
     /// @notice distributed amount of token to all tranches
+    /// @param _indexToken the token of which risk factors is used to calculate ratio
+    /// @param _collateralToken pool amount or reserve of this token will be changed. So we must cap the amount to be changed to the
+    /// max available value of this token (pool amount - reserve) when _isIncreasePoolAmount set to false
     /// @param _isIncreasePoolAmount set to true when "increase pool amount" or "decrease reserve amount"
-    function _calcTrancheSharesAmount(address _token, uint256 _amount, bool _isIncreasePoolAmount)
-        internal
-        view
-        returns (uint256[] memory reserves)
-    {
+    function _calcTrancheSharesAmount(
+        address _indexToken,
+        address _collateralToken,
+        uint256 _amount,
+        bool _isIncreasePoolAmount
+    ) internal view returns (uint256[] memory reserves) {
         uint256 nTranches = allTranches.length;
         reserves = new uint[](nTranches);
         uint256[] memory factors = new uint[](nTranches);
@@ -1073,12 +1061,12 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
 
         for (uint256 i = 0; i < nTranches; i++) {
             address tranche = allTranches[i];
-            AssetInfo memory asset = trancheAssets[tranche][_token];
-            factors[i] = riskFactor[_token][tranche];
+            AssetInfo memory asset = trancheAssets[tranche][_collateralToken];
+            factors[i] = isStableCoin[_indexToken] ? 1 : riskFactor[_indexToken][tranche];
             maxShare[i] = _isIncreasePoolAmount ? type(uint256).max : asset.poolAmount - asset.reservedAmount;
         }
 
-        uint256 totalFactor = totalRiskFactor[_token];
+        uint256 totalFactor = isStableCoin[_indexToken] ? nTranches : totalRiskFactor[_indexToken];
 
         for (uint256 k = 0; k < nTranches; k++) {
             uint256 remaining = _amount; // amount distributed in this round
@@ -1106,24 +1094,30 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         }
 
         if (_amount > 0) {
-            revert PoolErrors.CannotDistributeToTranches(_token, _amount, _isIncreasePoolAmount);
+            revert PoolErrors.CannotDistributeToTranches(_indexToken, _collateralToken, _amount, _isIncreasePoolAmount);
         }
     }
 
     /// @notice rebalance fund between tranches after swap token
     function _rebalanceTranches(address _tokenIn, uint256 _amountIn, address _tokenOut, uint256 _amountOut) internal {
-        uint256[] memory shares;
-        shares = _calcTrancheSharesAmount(_tokenIn, _amountIn, true);
-        for (uint256 i = 0; i < shares.length; i++) {
-            address tranche = allTranches[i];
-            trancheAssets[tranche][_tokenIn].poolAmount += shares[i];
+        // amount devided to each tranche
+        uint256[] memory inAmounts;
+        uint256[] memory outAmounts;
+
+        if (!isStableCoin[_tokenIn] && isStableCoin[_tokenOut]) {
+            // use token in as index
+            inAmounts = _calcTrancheSharesAmount(_tokenIn, _tokenIn, _amountIn, true);
+            outAmounts = _calcTrancheSharesAmount(_tokenIn, _tokenOut, _amountOut, false);
+        } else {
+            // use token out as index
+            inAmounts = _calcTrancheSharesAmount(_tokenOut, _tokenIn, _amountIn, true);
+            outAmounts = _calcTrancheSharesAmount(_tokenOut, _tokenOut, _amountOut, false);
         }
 
-        shares = _calcTrancheSharesAmount(_tokenOut, _amountOut, false);
-        for (uint256 i = 0; i < shares.length; i++) {
+        for (uint256 i = 0; i < allTranches.length; i++) {
             address tranche = allTranches[i];
-            // always safe
-            trancheAssets[tranche][_tokenOut].poolAmount -= shares[i];
+            trancheAssets[tranche][_tokenIn].poolAmount += inAmounts[i];
+            trancheAssets[tranche][_tokenOut].poolAmount -= outAmounts[i];
         }
     }
 
@@ -1137,10 +1131,9 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         }
         // calculate fee needed when close position
         uint256 feeValue = _calcPositionFee(_position, _position.size, _borrowIndex);
-        feeValue = feeValue + fee.liquidationFee;
         SignedInt memory pnl = PositionUtils.calcPnl(_side, _position.size, _position.entryPrice, _indexPrice);
         SignedInt memory remainingCollateral = pnl.add(_position.collateralValue).sub(feeValue);
-        return !remainingCollateral.isPos() || remainingCollateral.abs * maxLeverage < _position.size;
+        return !remainingCollateral.gt(fee.liquidationFee);
     }
 
     function _calcDecreasePayout(
@@ -1150,15 +1143,10 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         Side _side,
         uint256 _sizeChanged,
         uint256 _collateralChanged
-    )
-        internal
-        view
-        returns (DecreasePositionVars memory vars)
-    {
+    ) internal view returns (DecreasePositionVars memory vars) {
         // clean user input
         vars.sizeChanged = _position.size < _sizeChanged ? _position.size : _sizeChanged;
-        vars.collateralReduced =
-            _position.collateralValue < _collateralChanged || _position.size == _sizeChanged
+        vars.collateralReduced = _position.collateralValue < _collateralChanged || _position.size == _sizeChanged
             ? _position.collateralValue
             : _collateralChanged;
 
@@ -1182,7 +1170,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         }
 
         vars.remainingCollateral = remainingCollateral.isNeg() ? 0 : remainingCollateral.abs;
-        vars.payout = payoutValue.isNeg() ? 0 : payoutValue.abs / vars.collateralPrice;
+        vars.payout = payoutValue.abs / vars.collateralPrice;
         SignedInt memory poolValueReduced = _side == Side.LONG ? payoutValue.add(vars.feeValue) : vars.pnl;
         vars.poolAmountReduced = poolValueReduced.div(vars.collateralPrice);
     }
