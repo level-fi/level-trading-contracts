@@ -378,18 +378,20 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
 
     function liquidatePosition(address _account, address _indexToken, address _collateralToken, Side _side) external {
         _requireValidTokenPair(_indexToken, _collateralToken, _side, false);
-        _accrueInterest(_collateralToken);
+        uint256 borrowIndex = _accrueInterest(_collateralToken);
+
         bytes32 key = _getPositionKey(_account, _indexToken, _collateralToken, _side);
         Position memory position = positions[key];
+        if (!_liquidatePositionAllowed(position, _side, oracle.getPrice(_indexToken), borrowIndex)) {
+            revert PoolErrors.PositionNotLiquidated(key);
+        }
         if (address(positionHook) != address(0)) {
             positionHook.preDecreasePosition(_account, _indexToken, _collateralToken, _side, position.size, bytes(""));
         }
+
         DecreasePositionVars memory vars =
             _calcDecreasePayout(position, _indexToken, _collateralToken, _side, position.size, position.collateralValue);
 
-        if (vars.remainingCollateral > fee.liquidationFee) {
-            revert PoolErrors.PositionNotLiquidated(key);
-        }
         uint256 liquidationFee = fee.liquidationFee / vars.collateralPrice;
         vars.poolAmountReduced = vars.poolAmountReduced.add(liquidationFee);
         _releasePoolAsset(key, vars, _indexToken, _collateralToken, _side);
