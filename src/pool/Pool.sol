@@ -457,13 +457,21 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
     }
 
     function addToken(address _token, bool _isStableCoin) external onlyOwner {
-        if (isAsset[_token]) {
+        if (!isAsset[_token]) {
+            isAsset[_token] = true;
+            isListed[_token] = true;
+            allAssets.push(_token);
+            isStableCoin[_token] = _isStableCoin;
+            emit TokenWhitelisted(_token);
+            return;
+        }
+
+        if (isListed[_token]) {
             revert PoolErrors.DuplicateToken(_token);
         }
-        isAsset[_token] = true;
+
+        // token is added but not listed
         isListed[_token] = true;
-        allAssets.push(_token);
-        isStableCoin[_token] = _isStableCoin;
         emit TokenWhitelisted(_token);
     }
 
@@ -475,7 +483,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         uint256 weight = targetWeights[_token];
         totalWeight -= weight;
         targetWeights[_token] = 0;
-        emit TokenWhitelisted(_token);
+        emit TokenDelisted(_token);
     }
 
     function setMaxLeverage(uint256 _maxLeverage) external onlyOwner {
