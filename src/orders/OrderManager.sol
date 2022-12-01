@@ -58,6 +58,9 @@ contract OrderManager is Initializable, OwnableUpgradeable, ReentrancyGuardUpgra
 
     IOrderHook public orderHook;
 
+    mapping(address => uint256[]) public userOrders;
+    mapping(address => uint256[]) public userSwapOrders;
+
     receive() external payable {
         // prevent send ETH directly to contract
         require(msg.sender == address(weth), "OrderManager:rejected");
@@ -76,6 +79,38 @@ contract OrderManager is Initializable, OwnableUpgradeable, ReentrancyGuardUpgra
         weth = IWETH(_weth);
     }
 
+    // ============= VIEW FUNCTIONS ==============
+    function getOrders(address user, uint256 skip, uint256 take)
+        external
+        view
+        returns (uint256[] memory orderIds, uint256 total)
+    {
+        total = userOrders[user].length;
+        uint256 toIdx = skip + take;
+        toIdx = toIdx > total ? total : toIdx;
+        uint256 nOrders = toIdx > skip ? toIdx - skip : 0;
+        orderIds = new uint[](nOrders);
+        for (uint256 i = 0; i < nOrders; i++) {
+            orderIds[i] = userOrders[user][i];
+        }
+    }
+
+    function getSwapOrders(address user, uint256 skip, uint256 take)
+        external
+        view
+        returns (uint256[] memory orderIds, uint256 total)
+    {
+        total = userSwapOrders[user].length;
+        uint256 toIdx = skip + take;
+        toIdx = toIdx > total ? total : toIdx;
+        uint256 nOrders = toIdx > skip ? toIdx - skip : 0;
+        orderIds = new uint[](nOrders);
+        for (uint256 i = 0; i < nOrders; i++) {
+            orderIds[i] = userSwapOrders[user][i];
+        }
+    }
+
+    // =========== MUTATIVE FUNCTIONS ==========
     function placeOrder(
         UpdatePositionType _updateType,
         Side _side,
@@ -86,11 +121,13 @@ contract OrderManager is Initializable, OwnableUpgradeable, ReentrancyGuardUpgra
     ) external payable nonReentrant {
         bool isIncrease = _updateType == UpdatePositionType.INCREASE;
         require(pool.validateToken(_indexToken, _collateralToken, _side, isIncrease), "OrderManager:invalidTokens");
+        uint256 orderId;
         if (isIncrease) {
-            _createIncreasePositionOrder(_side, _indexToken, _collateralToken, _orderType, data);
+            orderId = _createIncreasePositionOrder(_side, _indexToken, _collateralToken, _orderType, data);
         } else {
-            _createDecreasePositionOrder(_side, _indexToken, _collateralToken, _orderType, data);
+            orderId = _createDecreasePositionOrder(_side, _indexToken, _collateralToken, _orderType, data);
         }
+        userOrders[msg.sender].push(orderId);
     }
 
     function placeSwapOrder(address _tokenIn, address _tokenOut, uint256 _amountIn, uint256 _minOut, uint256 _price)
@@ -124,6 +161,7 @@ contract OrderManager is Initializable, OwnableUpgradeable, ReentrancyGuardUpgra
             executionFee: executionFee
         });
         swapOrders[nextSwapOrderId] = order;
+        userSwapOrders[msg.sender].push(nextSwapOrderId);
         emit SwapOrderPlaced(nextSwapOrderId);
         nextSwapOrderId += 1;
     }
@@ -323,7 +361,8 @@ contract OrderManager is Initializable, OwnableUpgradeable, ReentrancyGuardUpgra
             weth.deposit{value: purchaseAmount}();
         } else if (purchaseToken != _collateralToken) {
             // update request collateral value to the actual swap output
-            requests[orderId].collateral = _poolSwap(purchaseToken, _collateralToken, purchaseAmount, request.collateral, address(this));
+            requests[orderId].collateral =
+                _poolSwap(purchaseToken, _collateralToken, purchaseAmount, request.collateral, address(this));
         } else if (purchaseToken != ETH) {
             IERC20(purchaseToken).safeTransferFrom(msg.sender, address(this), request.collateral);
         }

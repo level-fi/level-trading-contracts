@@ -37,4 +37,5 @@ library PoolErrors {
     error CannotSetRiskFactorForStableCoin(address token);
     error PositionNotExists(address owner, address indexToken, address collateralToken, Side side);
     error MaxNumberOfTranchesReached();
+    error TooManyTokenAdded(uint256 number, uint256 max);
 }

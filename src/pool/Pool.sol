@@ -27,7 +27,8 @@ import {
     MAX_POSITION_FEE,
     MAX_LIQUIDATION_FEE,
     MAX_TRANCHES,
-    MAX_INTEREST_RATE
+    MAX_INTEREST_RATE,
+    MAX_ASSETS
 } from "./PoolStorage.sol";
 import {PoolErrors} from "./PoolErrors.sol";
 import {IPositionHook} from "../interfaces/IPositionHook.sol";
@@ -233,6 +234,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         Side _side
     ) external onlyOrderManager {
         _requireValidTokenPair(_indexToken, _collateralToken, _side, true);
+        _rebalancePosition(_owner, _indexToken, _collateralToken, _side);
         IncreasePositionVars memory vars;
         vars.collateralAmount = _getAmountIn(_collateralToken);
         if (vars.collateralAmount == 0) {
@@ -308,6 +310,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         address _receiver
     ) external onlyOrderManager {
         _requireValidTokenPair(_indexToken, _collateralToken, _side, false);
+        _rebalancePosition(_owner, _indexToken, _collateralToken, _side);
         uint256 borrowIndex = _accrueInterest(_collateralToken);
         bytes32 key = _getPositionKey(_owner, _indexToken, _collateralToken, _side);
         Position memory position = positions[key];
@@ -469,6 +472,9 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
             isListed[_token] = true;
             allAssets.push(_token);
             isStableCoin[_token] = _isStableCoin;
+            if (allAssets.length > MAX_ASSETS) {
+                revert PoolErrors.TooManyTokenAdded(allAssets.length, MAX_ASSETS);
+            }
             emit TokenWhitelisted(_token);
             return;
         }
@@ -589,11 +595,6 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         }
         totalWeight = total;
         emit TokenWeightSet(tokens);
-    }
-
-    function setMaxPositionSize(uint256 _maxSize) external onlyOwner {
-        maxPositionSize = _maxSize;
-        emit MaxPositionSizeSet(_maxSize);
     }
 
     function setPositionHook(address _hook) external onlyOwner {
@@ -718,7 +719,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         bool _isIncrease,
         uint256 _indexPrice
     ) internal view {
-        if ((_isIncrease && _position.size == 0) || (maxPositionSize > 0 && _position.size > maxPositionSize)) {
+        if ((_isIncrease && _position.size == 0)) {
             revert PoolErrors.InvalidPositionSize();
         }
 
@@ -1093,9 +1094,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
             }
         }
 
-        if (_amount > 0) {
-            revert PoolErrors.CannotDistributeToTranches(_indexToken, _collateralToken, _amount, _isIncreasePoolAmount);
-        }
+        revert PoolErrors.CannotDistributeToTranches(_indexToken, _collateralToken, _amount, _isIncreasePoolAmount);
     }
 
     /// @notice rebalance fund between tranches after swap token
@@ -1170,7 +1169,7 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
         }
 
         vars.remainingCollateral = remainingCollateral.isNeg() ? 0 : remainingCollateral.abs;
-        vars.payout = payoutValue.abs / vars.collateralPrice;
+        vars.payout = payoutValue.isNeg() ? 0 : payoutValue.abs / vars.collateralPrice;
         SignedInt memory poolValueReduced = _side == Side.LONG ? payoutValue.add(vars.feeValue) : vars.pnl;
         vars.poolAmountReduced = poolValueReduced.div(vars.collateralPrice);
     }
@@ -1187,5 +1186,24 @@ contract Pool is Initializable, PoolStorage, OwnableUpgradeable, ReentrancyGuard
 
     function _getPrice(address _token) internal view returns (uint256) {
         return oracle.getPrice(_token);
+    }
+
+    function _rebalancePosition(address _owner, address _indexToken, address _collateralToken, Side _side) internal {
+        bytes32 positionKey = _getPositionKey(_owner, _indexToken, _collateralToken, _side);
+        uint256 positionReserve = positions[positionKey].reserveAmount;
+        if (positionReserve == 0) {
+            return;
+        }
+        uint256 nTranches = allTranches.length;
+        for (uint256 i = 0; i < nTranches; i++) {
+            address tranche = allTranches[i];
+            trancheAssets[tranche][_collateralToken].reservedAmount -= tranchePositionReserves[tranche][positionKey];
+        }
+        uint256[] memory newReserves = _calcTrancheSharesAmount(_indexToken, _collateralToken, positionReserve, false);
+        for (uint256 i = 0; i < nTranches; i++) {
+            address tranche = allTranches[i];
+            tranchePositionReserves[tranche][positionKey] = newReserves[i];
+            trancheAssets[tranche][_collateralToken].reservedAmount += newReserves[i];
+        }
     }
 }

@@ -14,6 +14,7 @@ uint256 constant MAX_TAX_BASIS_POINT = 1e8; // 1%
 uint256 constant MAX_POSITION_FEE = 1e8; // 1%
 uint256 constant MAX_LIQUIDATION_FEE = 10e30; // 10$
 uint256 constant MAX_TRANCHES = 3;
+uint256 constant MAX_ASSETS = 10;
 uint256 constant MAX_INTEREST_RATE = 1e7; // 0.1%
 
 struct Fee {
@@ -107,7 +108,7 @@ abstract contract PoolStorage {
     mapping(address => uint256) public totalRiskFactor;
 
     address[] public allTranches;
-
+    /// @dev tranche => token => asset info
     mapping(address => mapping(address => AssetInfo)) public trancheAssets;
     /// @notice position reserve in each tranche
     mapping(address => mapping(bytes32 => uint256)) public tranchePositionReserves;
@@ -123,8 +124,6 @@ abstract contract PoolStorage {
     uint256 public maxLeverage;
     /// @notice positions tracks all open positions
     mapping(bytes32 => Position) public positions;
-    /// @notice max position size allowed to open. Disable if set to 0
-    uint256 public maxPositionSize;
 
     IPositionHook public positionHook;
 }
