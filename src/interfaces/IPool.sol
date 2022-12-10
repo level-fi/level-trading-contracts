@@ -130,4 +130,5 @@ interface IPool {
     event TrancheAdded(address lpToken);
     event TokenRiskFactorUpdated(address token);
     event PnLDistributed(address indexed asset, address indexed tranche, uint256 amount, bool hasProfit);
+    event MaintenanceMarginChanged(uint256 ratio);
 }

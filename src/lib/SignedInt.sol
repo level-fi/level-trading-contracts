@@ -96,6 +96,10 @@ library SignedIntOps {
         return a.sig == POS && a.abs > b;
     }
 
+    function lt(SignedInt memory a, uint256 b) internal pure returns (bool) {
+        return a.sig == NEG || a.abs < b;
+    }
+
     function isNeg(SignedInt memory a) internal pure returns (bool) {
         return a.sig == NEG;
     }

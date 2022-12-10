@@ -6,8 +6,8 @@ import {IOracle} from "../interfaces/IOracle.sol";
 import {ILPToken} from "../interfaces/ILPToken.sol";
 import {IPositionHook} from "../interfaces/IPositionHook.sol";
 
-uint256 constant INTEREST_RATE_PRECISION = 1e10;
-uint256 constant FEE_PRECISION = 1e10;
+// common precision for fee, tax, interest rate, maintenace margin ratio
+uint256 constant PRECISION = 1e10;
 uint256 constant LP_INITIAL_PRICE = 1e12; // fix to 1$
 uint256 constant MAX_BASE_SWAP_FEE = 1e8; // 1%
 uint256 constant MAX_TAX_BASIS_POINT = 1e8; // 1%
@@ -16,6 +16,7 @@ uint256 constant MAX_LIQUIDATION_FEE = 10e30; // 10$
 uint256 constant MAX_TRANCHES = 3;
 uint256 constant MAX_ASSETS = 10;
 uint256 constant MAX_INTEREST_RATE = 1e7; // 0.1%
+uint256 constant MAX_MAINTENANCE_MARGIN = 5e8; // 5%
 
 struct Fee {
     /// @notice charge when changing position size
@@ -126,4 +127,6 @@ abstract contract PoolStorage {
     mapping(bytes32 => Position) public positions;
 
     IPositionHook public positionHook;
+
+    uint256 public maintenanceMargin;
 }
