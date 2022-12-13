@@ -635,6 +635,7 @@ contract Pool is Initializable, OwnableUpgradeable, ReentrancyGuardUpgradeable, 
 
     function _setPositionFee(uint256 _positionFee, uint256 _liquidationFee) internal {
         _validateMaxValue(_positionFee, MAX_POSITION_FEE);
+        _validateMaxValue(_liquidationFee, MAX_LIQUIDATION_FEE);
         fee.positionFee = _positionFee;
         fee.liquidationFee = _liquidationFee;
         emit PositionFeeSet(_positionFee, _liquidationFee);
@@ -1087,6 +1088,9 @@ contract Pool is Initializable, OwnableUpgradeable, ReentrancyGuardUpgradeable, 
             uint256 totalRiskFactor_ = totalFactor;
             for (uint256 i = 0; i < nTranches; i++) {
                 uint256 riskFactor_ = factors[i];
+                if (riskFactor_ == 0) {
+                    continue;
+                }
                 uint256 shareAmount = MathUtils.frac(_amount, riskFactor_, totalRiskFactor_);
                 uint256 availableAmount = maxShare[i] - reserves[i];
                 if (shareAmount >= availableAmount) {
@@ -1204,24 +1208,5 @@ contract Pool is Initializable, OwnableUpgradeable, ReentrancyGuardUpgradeable, 
 
     function _getPrice(address _token) internal view returns (uint256) {
         return oracle.getPrice(_token);
-    }
-
-    function _rebalancePosition(address _owner, address _indexToken, address _collateralToken, Side _side) internal {
-        bytes32 positionKey = _getPositionKey(_owner, _indexToken, _collateralToken, _side);
-        uint256 positionReserve = positions[positionKey].reserveAmount;
-        if (positionReserve == 0) {
-            return;
-        }
-        uint256 nTranches = allTranches.length;
-        for (uint256 i = 0; i < nTranches; i++) {
-            address tranche = allTranches[i];
-            trancheAssets[tranche][_collateralToken].reservedAmount -= tranchePositionReserves[tranche][positionKey];
-        }
-        uint256[] memory newReserves = _calcTrancheSharesAmount(_indexToken, _collateralToken, positionReserve, false);
-        for (uint256 i = 0; i < nTranches; i++) {
-            address tranche = allTranches[i];
-            tranchePositionReserves[tranche][positionKey] = newReserves[i];
-            trancheAssets[tranche][_collateralToken].reservedAmount += newReserves[i];
-        }
     }
 }
