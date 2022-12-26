@@ -49,9 +49,9 @@ interface IPool {
         external;
 
     // =========== EVENTS ===========
-    event SetOrderManager(address orderManager);
+    event SetOrderManager(address indexed orderManager);
     event IncreasePosition(
-        bytes32 key,
+        bytes32 indexed key,
         address account,
         address collateralToken,
         address indexToken,
@@ -62,7 +62,7 @@ interface IPool {
         uint256 feeValue
     );
     event UpdatePosition(
-        bytes32 key,
+        bytes32 indexed key,
         uint256 size,
         uint256 collateralValue,
         uint256 entryPrice,
@@ -71,7 +71,7 @@ interface IPool {
         uint256 indexPrice
     );
     event DecreasePosition(
-        bytes32 key,
+        bytes32 indexed key,
         address account,
         address collateralToken,
         address indexToken,
@@ -83,7 +83,7 @@ interface IPool {
         uint256 feeValue
     );
     event ClosePosition(
-        bytes32 key,
+        bytes32 indexed key,
         uint256 size,
         uint256 collateralValue,
         uint256 entryPrice,
@@ -91,7 +91,7 @@ interface IPool {
         uint256 reserveAmount
     );
     event LiquidatePosition(
-        bytes32 key,
+        bytes32 indexed key,
         address account,
         address collateralToken,
         address indexToken,
@@ -103,9 +103,9 @@ interface IPool {
         SignedInt pnl,
         uint256 feeValue
     );
-    event DaoFeeWithdrawn(address token, address recipient, uint256 amount);
-    event DaoFeeReduced(address token, uint256 amount);
-    event FeeDistributorSet(address feeDistributor);
+    event DaoFeeWithdrawn(address indexed token, address recipient, uint256 amount);
+    event DaoFeeReduced(address indexed token, uint256 amount);
+    event FeeDistributorSet(address indexed feeDistributor);
     event LiquidityAdded(
         address indexed tranche, address indexed sender, address token, uint256 amount, uint256 lpAmount, uint256 fee
     );
@@ -113,22 +113,23 @@ interface IPool {
         address indexed tranche, address indexed sender, address token, uint256 lpAmount, uint256 amountOut, uint256 fee
     );
     event TokenWeightSet(TokenWeight[]);
-    event Swap(address sender, address tokenIn, address tokenOut, uint256 amountIn, uint256 amountOut, uint256 fee);
+    event Swap(address indexed sender, address tokenIn, address tokenOut, uint256 amountIn, uint256 amountOut, uint256 fee);
     event PositionFeeSet(uint256 positionFee, uint256 liquidationFee);
     event DaoFeeSet(uint256 value);
     event SwapFeeSet(
         uint256 baseSwapFee, uint256 taxBasisPoint, uint256 stableCoinBaseSwapFee, uint256 stableCoinTaxBasisPoint
     );
-    event InterestAccrued(address token, uint256 borrowIndex);
+    event InterestAccrued(address indexed token, uint256 borrowIndex);
     event MaxLeverageChanged(uint256 maxLeverage);
-    event TokenWhitelisted(address token);
-    event TokenDelisted(address token);
+    event TokenWhitelisted(address indexed token);
+    event TokenDelisted(address indexed token);
     event OracleChanged(address oldOracle, address newOracle);
-    event InterestRateSet(uint256 interestRate, uint256);
+    event InterestRateSet(uint256 interestRate, uint256 interval);
     event MaxPositionSizeSet(uint256 maxPositionSize);
-    event PositionHookChanged(address hook);
-    event TrancheAdded(address lpToken);
-    event TokenRiskFactorUpdated(address token);
+    event PositionHookChanged(address indexed hook);
+    event TrancheAdded(address indexed lpToken);
+    event TokenRiskFactorUpdated(address indexed token);
     event PnLDistributed(address indexed asset, address indexed tranche, uint256 amount, bool hasProfit);
     event MaintenanceMarginChanged(uint256 ratio);
+    event AddRemoveLiquidityFeeSet(uint256 value);
 }

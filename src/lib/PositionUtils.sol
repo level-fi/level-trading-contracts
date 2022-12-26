@@ -29,15 +29,19 @@ library PositionUtils {
     function calcAveragePrice(
         Side _side,
         uint256 _lastSize,
-        uint256 _increasedSize,
+        uint256 _nextSize,
         uint256 _entryPrice,
-        uint256 _nextPrice
+        uint256 _nextPrice,
+        SignedInt memory _realizedPnL
     ) internal pure returns (uint256) {
+        if (_nextSize == 0) {
+            return 0;
+        }
         if (_lastSize == 0) {
             return _nextPrice;
         }
-        SignedInt memory pnl = calcPnl(_side, _lastSize, _entryPrice, _nextPrice);
-        SignedInt memory nextSize = SignedIntOps.wrap(_lastSize + _increasedSize);
+        SignedInt memory pnl = calcPnl(_side, _lastSize, _entryPrice, _nextPrice).sub(_realizedPnL);
+        SignedInt memory nextSize = SignedIntOps.wrap(_nextSize);
         SignedInt memory divisor = _side == Side.LONG ? nextSize.add(pnl) : nextSize.sub(pnl);
         return nextSize.mul(_nextPrice).div(divisor).toUint();
     }

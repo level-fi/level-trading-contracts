@@ -2,7 +2,7 @@
 
 pragma solidity 0.8.15;
 
-import {IOracle} from "../interfaces/IOracle.sol";
+import {ILevelOracle} from "../interfaces/ILevelOracle.sol";
 import {ILPToken} from "../interfaces/ILPToken.sol";
 import {IPositionHook} from "../interfaces/IPositionHook.sol";
 
@@ -80,7 +80,7 @@ abstract contract PoolStorage {
 
     address public feeDistributor;
 
-    IOracle public oracle;
+    ILevelOracle public oracle;
 
     address public orderManager;
 
@@ -129,4 +129,6 @@ abstract contract PoolStorage {
     IPositionHook public positionHook;
 
     uint256 public maintenanceMargin;
+
+    uint256 public addRemoveLiquidityFee;
 }

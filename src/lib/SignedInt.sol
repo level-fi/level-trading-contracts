@@ -23,8 +23,10 @@ library SignedIntOps {
             return SignedInt(POS, 0); // always return positive zero
         }
 
-        (uint256 sig, uint256 abs) = a.abs > b.abs ? (a.sig, a.abs - b.abs) : (b.sig, b.abs - a.abs);
-        return SignedInt(sig, abs);
+        unchecked {
+            (uint256 sig, uint256 abs) = a.abs > b.abs ? (a.sig, a.abs - b.abs) : (b.sig, b.abs - a.abs);
+            return SignedInt(sig, abs);
+        }
     }
 
     function inv(SignedInt memory a) internal pure returns (SignedInt memory) {
@@ -55,32 +57,12 @@ library SignedIntOps {
         return sub(a, wrap(b));
     }
 
-    function add(SignedInt memory a, int256 b) internal pure returns (SignedInt memory) {
-        return add(a, wrap(b));
-    }
-
-    function sub(SignedInt memory a, int256 b) internal pure returns (SignedInt memory) {
-        return sub(a, wrap(b));
-    }
-
     function mul(SignedInt memory a, uint256 b) internal pure returns (SignedInt memory) {
-        return mul(a, wrap(b));
-    }
-
-    function mul(SignedInt memory a, int256 b) internal pure returns (SignedInt memory) {
         return mul(a, wrap(b));
     }
 
     function div(SignedInt memory a, uint256 b) internal pure returns (SignedInt memory) {
         return div(a, wrap(b));
-    }
-
-    function div(SignedInt memory a, int256 b) internal pure returns (SignedInt memory) {
-        return div(a, wrap(b));
-    }
-
-    function wrap(int256 a) internal pure returns (SignedInt memory) {
-        return a >= 0 ? SignedInt(POS, uint256(a)) : SignedInt(NEG, uint256(-a));
     }
 
     function wrap(uint256 a) internal pure returns (SignedInt memory) {
