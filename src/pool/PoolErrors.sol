@@ -14,17 +14,14 @@ library PoolErrors {
     error AssetNotListed(address token);
     error InsufficientPoolAmount(address token);
     error ReserveReduceTooMuch(address token);
-    error InvalidTransferInAmount(uint256 expected, uint256 actual);
     error SlippageExceeded();
     error ValueTooHigh(uint256 maxValue);
     error InvalidInterval();
     error PositionNotLiquidated(bytes32 key);
-    error RedeemDelayed();
     error ZeroAmount();
     error ZeroAddress();
     error RequireAllTokens();
     error DuplicateToken(address token);
-    error TokenNotListed(address token);
     error FeeDistributorOnly();
     error InvalidMaxLeverage();
     error SameTokenSwap(address token);
@@ -38,4 +35,5 @@ library PoolErrors {
     error PositionNotExists(address owner, address indexToken, address collateralToken, Side side);
     error MaxNumberOfTranchesReached();
     error TooManyTokenAdded(uint256 number, uint256 max);
+    error AddLiquidityNotAllowed(address tranche, address token);
 }
