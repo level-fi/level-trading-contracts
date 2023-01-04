@@ -4,7 +4,7 @@ pragma solidity 0.8.15;
 
 import {ILevelOracle} from "../interfaces/ILevelOracle.sol";
 import {ILPToken} from "../interfaces/ILPToken.sol";
-import {IPositionHook} from "../interfaces/IPositionHook.sol";
+import {IPoolHook} from "../interfaces/IPoolHook.sol";
 
 // common precision for fee, tax, interest rate, maintenace margin ratio
 uint256 constant PRECISION = 1e10;
@@ -126,7 +126,7 @@ abstract contract PoolStorage {
     /// @notice positions tracks all open positions
     mapping(bytes32 => Position) public positions;
 
-    IPositionHook public positionHook;
+    IPoolHook public poolHook;
 
     uint256 public maintenanceMargin;
 

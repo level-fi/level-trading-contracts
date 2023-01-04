@@ -1,24 +1,32 @@
 pragma solidity 0.8.15;
 
-import {IPositionHook} from "../interfaces/IPositionHook.sol";
+import {Ownable} from "openzeppelin/access/Ownable.sol";
+import {IPoolHook} from "../interfaces/IPoolHook.sol";
 import {Side, IPool} from "../interfaces/IPool.sol";
 import {IMintableErc20} from "../interfaces/IMintableErc20.sol";
-import {IReferralController} from "../interfaces/IReferralController.sol";
-import {Ownable} from "openzeppelin/access/Ownable.sol";
+import {ILevelOracle} from "../interfaces/ILevelOracle.sol";
 
-contract PoolHook is Ownable, IPositionHook {
+interface IPoolForHook {
+    function oracle() external view returns (ILevelOracle);
+}
+
+contract PoolHook is Ownable, IPoolHook {
+    uint256 constant MULTIPLIER_PRECISION = 100;
+    uint256 constant MAX_MULTIPLIER = 5 * MULTIPLIER_PRECISION;
     uint8 constant lyLevelDecimals = 18;
     uint256 constant VALUE_PRECISION = 1e30;
+
     address private immutable pool;
     IMintableErc20 public immutable lyLevel;
-    IReferralController public referralController;
 
-    constructor(address _lyLevel, address _pool, address _referralController) {
+    uint256 public positionSizeMultiplier = 100;
+    uint256 public swapSizeMultiplier = 100;
+
+    constructor(address _lyLevel, address _pool) {
         require(_lyLevel != address(0), "PoolHook:invalidAddress");
         require(_pool != address(0), "PoolHook:invalidAddress");
         lyLevel = IMintableErc20(_lyLevel);
         pool = _pool;
-        referralController = IReferralController(_referralController);
     }
 
     function validatePool(address sender) internal view {
@@ -30,85 +38,80 @@ contract PoolHook is Ownable, IPositionHook {
         _;
     }
 
-    function preIncreasePosition(
-        address owner,
-        address indexToken,
-        address collateralToken,
-        Side side,
-        bytes calldata extradata
-    ) external onlyPool {}
-
     function postIncreasePosition(
-        address owner,
-        address indexToken,
-        address collateralToken,
-        Side side,
-        bytes calldata extradata
-    ) external onlyPool {}
-
-    function preDecreasePosition(
-        address owner,
-        address indexToken,
-        address collateralToken,
-        Side side,
-        bytes calldata extradata
+        address _owner,
+        address _indexToken,
+        address _collateralToken,
+        Side _side,
+        bytes calldata _extradata
     ) external onlyPool {}
 
     function postDecreasePosition(
-        address owner,
-        address indexToken,
-        address collateralToken,
-        Side side,
-        bytes calldata extradata
+        address _owner,
+        address _indexToken,
+        address _collateralToken,
+        Side _side,
+        bytes calldata _extradata
     ) external onlyPool {
-        (uint256 sizeChange, /* uint256 collateralValue */) = abi.decode(extradata, (uint256, uint256));
-        _handlePositionClosed(owner, indexToken, collateralToken, side, sizeChange);
-        emit PostDecreasePositionExecuted(msg.sender, owner, indexToken, collateralToken, side, extradata);
+        (uint256 sizeChange, /* uint256 collateralValue */ ) = abi.decode(_extradata, (uint256, uint256));
+        _handlePositionClosed(_owner, _indexToken, _collateralToken, _side, sizeChange);
+        emit PostDecreasePositionExecuted(msg.sender, _owner, _indexToken, _collateralToken, _side, _extradata);
     }
-
-    function preLiquidatePosition(
-        address owner,
-        address indexToken,
-        address collateralToken,
-        Side side,
-        bytes calldata extradata
-    ) external onlyPool {}
-
 
     function postLiquidatePosition(
-        address owner,
-        address indexToken,
-        address collateralToken,
-        Side side,
-        bytes calldata extradata
+        address _owner,
+        address _indexToken,
+        address _collateralToken,
+        Side _side,
+        bytes calldata _extradata
     ) external onlyPool {
-        (uint256 sizeChange, /* uint256 collateralValue */) = abi.decode(extradata, (uint256, uint256));
-        _handlePositionClosed(owner, indexToken, collateralToken, side, sizeChange);
-        emit PostLiquidatePositionExecuted(msg.sender, owner, indexToken, collateralToken, side, extradata);
+        (uint256 sizeChange, /* uint256 collateralValue */ ) = abi.decode(_extradata, (uint256, uint256));
+        _handlePositionClosed(_owner, _indexToken, _collateralToken, _side, sizeChange);
+        emit PostLiquidatePositionExecuted(msg.sender, _owner, _indexToken, _collateralToken, _side, _extradata);
     }
 
-    function setReferralController(address _controller) external onlyOwner {
-        referralController = IReferralController(_controller);
-        emit ReferralControllerSet(_controller);
+    function postSwap(address _user, address _tokenIn, address _tokenOut, bytes calldata _data) external {
+        (uint256 amountIn, /* uint256 amountOut */ ) = abi.decode(_data, (uint256, uint256));
+        uint256 priceIn = _getPrice(_tokenIn, false);
+        uint256 lyTokenAmount = (amountIn * priceIn * 10 ** lyLevelDecimals) * positionSizeMultiplier
+            / MULTIPLIER_PRECISION / VALUE_PRECISION;
+        if (lyTokenAmount != 0) {
+            lyLevel.mint(_user, lyTokenAmount);
+        }
+        emit PostSwapExecuted(msg.sender, _user, _tokenIn, _tokenOut, _data);
     }
 
+    // ========= Admin function ========
+
+    function setMultipliers(uint256 _positionSizeMultiplier, uint256 _swapSizeMultiplier) external onlyOwner {
+        require(_positionSizeMultiplier <= MAX_MULTIPLIER, "Multiplier too high");
+        require(_swapSizeMultiplier <= MAX_MULTIPLIER, "Multiplier too high");
+        positionSizeMultiplier = _positionSizeMultiplier;
+        swapSizeMultiplier = _swapSizeMultiplier;
+        emit MultipliersSet(positionSizeMultiplier, swapSizeMultiplier);
+    }
+
+    // ========= Internal function ========
     function _handlePositionClosed(
-        address owner,
-        address indexToken,
-        address collateralToken,
-        Side side,
-        uint256 sizeChange
+        address _owner,
+        address, /* _indexToken */
+        address, /* _collateralToken */
+        Side, /* _side */
+        uint256 _sizeChange
     ) internal {
-        uint256 lyTokenAmount = (sizeChange * 10 ** lyLevelDecimals) / VALUE_PRECISION;
+        uint256 lyTokenAmount =
+            (_sizeChange * 10 ** lyLevelDecimals) * positionSizeMultiplier / MULTIPLIER_PRECISION / VALUE_PRECISION;
 
-        if (lyTokenAmount > 0) {
-            lyLevel.mint(owner, lyTokenAmount);
+        if (lyTokenAmount != 0) {
+            lyLevel.mint(_owner, lyTokenAmount);
         }
+    }
 
-        if (address(referralController) != address(0)) {
-            referralController.handlePositionDecreased(owner, indexToken, collateralToken, side, sizeChange);
-        }
+    function _getPrice(address token, bool max) internal view returns (uint256) {
+        ILevelOracle oracle = IPoolForHook(pool).oracle();
+        return oracle.getPrice(token, max);
     }
 
     event ReferralControllerSet(address controller);
+    event MultipliersSet(uint256 positionSizeMultiplier, uint256 swapSizeMultiplier);
 }

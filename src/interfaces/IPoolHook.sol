@@ -2,24 +2,8 @@ pragma solidity 0.8.15;
 
 import {Side, IPool} from "./IPool.sol";
 
-interface IPositionHook {
-    function preIncreasePosition(
-        address owner,
-        address indexToken,
-        address collateralToken,
-        Side side,
-        bytes calldata extradata
-    ) external;
-
+interface IPoolHook {
     function postIncreasePosition(
-        address owner,
-        address indexToken,
-        address collateralToken,
-        Side side,
-        bytes calldata extradata
-    ) external;
-
-    function preDecreasePosition(
         address owner,
         address indexToken,
         address collateralToken,
@@ -35,14 +19,6 @@ interface IPositionHook {
         bytes calldata extradata
     ) external;
 
-    function preLiquidatePosition(
-        address owner,
-        address indexToken,
-        address collateralToken,
-        Side side,
-        bytes calldata extradata
-    ) external;
-
     function postLiquidatePosition(
         address owner,
         address indexToken,
@@ -50,6 +26,8 @@ interface IPositionHook {
         Side side,
         bytes calldata extradata
     ) external;
+
+    function postSwap(address user, address tokenIn, address tokenOut, bytes calldata data) external;
 
     event PreIncreasePositionExecuted(
         address pool, address owner, address indexToken, address collateralToken, Side side, bytes extradata
@@ -69,4 +47,6 @@ interface IPositionHook {
     event PostLiquidatePositionExecuted(
         address pool, address owner, address indexToken, address collateralToken, Side side, bytes extradata
     );
+
+    event PostSwapExecuted(address pool, address user, address tokenIn, address tokenOut, bytes data);
 }

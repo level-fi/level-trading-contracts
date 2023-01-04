@@ -123,10 +123,10 @@ interface IPool {
     event MaxLeverageChanged(uint256 maxLeverage);
     event TokenWhitelisted(address indexed token);
     event TokenDelisted(address indexed token);
-    event OracleChanged(address oldOracle, address newOracle);
+    event OracleChanged(address indexed oldOracle, address indexed newOracle);
     event InterestRateSet(uint256 interestRate, uint256 interval);
     event MaxPositionSizeSet(uint256 maxPositionSize);
-    event PositionHookChanged(address indexed hook);
+    event PoolHookChanged(address indexed hook);
     event TrancheAdded(address indexed lpToken);
     event TokenRiskFactorUpdated(address indexed token);
     event PnLDistributed(address indexed asset, address indexed tranche, uint256 amount, bool hasProfit);
