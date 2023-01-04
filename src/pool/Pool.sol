@@ -1228,7 +1228,7 @@ contract Pool is Initializable, OwnableUpgradeable, ReentrancyGuardUpgradeable, 
             // cap the value of pool amount change to collateral value after fee in case of lost
             uint256 totalFee = isLiquidate ? vars.feeValue + fee.liquidationFee : vars.feeValue;
             poolValueReduced.abs =
-                MathUtils.min(vars.pnl.abs, MathUtils.zeroCapSub(_position.collateralValue, totalFee));
+                MathUtils.min(poolValueReduced.abs, MathUtils.zeroCapSub(_position.collateralValue, totalFee));
         }
         vars.poolAmountReduced = poolValueReduced.div(vars.collateralPrice);
     }
