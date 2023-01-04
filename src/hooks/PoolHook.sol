@@ -73,8 +73,8 @@ contract PoolHook is Ownable, IPoolHook {
     function postSwap(address _user, address _tokenIn, address _tokenOut, bytes calldata _data) external {
         (uint256 amountIn, /* uint256 amountOut */ ) = abi.decode(_data, (uint256, uint256));
         uint256 priceIn = _getPrice(_tokenIn, false);
-        uint256 lyTokenAmount = (amountIn * priceIn * 10 ** lyLevelDecimals) * positionSizeMultiplier
-            / MULTIPLIER_PRECISION / VALUE_PRECISION;
+        uint256 lyTokenAmount =
+            (amountIn * priceIn * 10 ** lyLevelDecimals) * swapSizeMultiplier / MULTIPLIER_PRECISION / VALUE_PRECISION;
         if (lyTokenAmount != 0) {
             lyLevel.mint(_user, lyTokenAmount);
         }
