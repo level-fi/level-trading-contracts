@@ -477,6 +477,7 @@ contract OrderManager is Initializable, OwnableUpgradeable, ReentrancyGuardUpgra
 
     function setMinExecutionFee(uint256 _fee) external onlyOwner {
         require(_fee != 0, "OrderManager:invalidFeeValue");
+        require(_fee <= MAX_MIN_EXECUTION_FEE, "OrderManager:minExecutionFeeTooHigh");
         minExecutionFee = _fee;
         emit MinExecutionFeeSet(_fee);
     }
