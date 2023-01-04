@@ -70,7 +70,7 @@ contract PoolHook is Ownable, IPoolHook {
         emit PostLiquidatePositionExecuted(msg.sender, _owner, _indexToken, _collateralToken, _side, _extradata);
     }
 
-    function postSwap(address _user, address _tokenIn, address _tokenOut, bytes calldata _data) external {
+    function postSwap(address _user, address _tokenIn, address _tokenOut, bytes calldata _data) external onlyPool {
         (uint256 amountIn, /* uint256 amountOut */ ) = abi.decode(_data, (uint256, uint256));
         uint256 priceIn = _getPrice(_tokenIn, false);
         uint256 lyTokenAmount =
