@@ -61,6 +61,7 @@ struct PoolTokenInfo {
     /// @notice accumulated interest rate
     uint256 borrowIndex;
     /// @notice average entry price of all short position
+    /// @deprecated avg short price must be calculate per tranche
     uint256 averageShortPrice;
 }
 
@@ -131,4 +132,6 @@ abstract contract PoolStorage {
     uint256 public maintenanceMargin;
 
     uint256 public addRemoveLiquidityFee;
+
+    mapping(address => mapping(address => uint)) public averageShortPrices;
 }

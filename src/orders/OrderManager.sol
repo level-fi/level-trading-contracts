@@ -195,7 +195,7 @@ contract OrderManager is Initializable, OwnableUpgradeable, ReentrancyGuardUpgra
     function swap(address _fromToken, address _toToken, uint256 _amountIn, uint256 _minAmountOut) external payable {
         _amountIn = _fromToken == ETH ? msg.value : _amountIn;
         (address outToken, address receiver) = _toToken == ETH ? (address(weth), address(this)) : (_toToken, msg.sender);
-        uint256 amountOut = _poolSwap(_fromToken, outToken, _amountIn, _minAmountOut, receiver);
+        uint256 amountOut = _poolSwap(_fromToken, outToken, _amountIn, _minAmountOut, receiver, msg.sender);
         if (outToken == address(weth) && _toToken == ETH) {
             _safeUnwrapETH(amountOut, msg.sender);
         }
@@ -264,9 +264,9 @@ contract OrderManager is Initializable, OwnableUpgradeable, ReentrancyGuardUpgra
         IERC20(order.tokenIn).safeTransfer(address(order.pool), order.amountIn);
         uint256 amountOut;
         if (order.tokenOut != ETH) {
-            amountOut = _doSwap(order.tokenIn, order.tokenOut, order.minAmountOut, order.owner);
+            amountOut = _doSwap(order.tokenIn, order.tokenOut, order.minAmountOut, order.owner, order.owner);
         } else {
-            amountOut = _doSwap(order.tokenIn, address(weth), order.minAmountOut, address(this));
+            amountOut = _doSwap(order.tokenIn, address(weth), order.minAmountOut, address(this), order.owner);
             _safeUnwrapETH(amountOut, order.owner);
         }
         _safeTransferETH(_feeTo, order.executionFee);
@@ -297,7 +297,7 @@ contract OrderManager is Initializable, OwnableUpgradeable, ReentrancyGuardUpgra
                 _safeUnwrapETH(payoutAmount, _order.owner);
             } else if (_order.collateralToken != _order.payToken) {
                 IERC20(_order.payToken).safeTransfer(address(_order.pool), payoutAmount);
-                _order.pool.swap(_order.collateralToken, _order.payToken, 0, _order.owner);
+                _order.pool.swap(_order.collateralToken, _order.payToken, 0, _order.owner, abi.encode(_order.owner));
             } else {
                 collateralToken.safeTransfer(_order.owner, payoutAmount);
             }
@@ -392,8 +392,9 @@ contract OrderManager is Initializable, OwnableUpgradeable, ReentrancyGuardUpgra
             weth.deposit{value: purchaseAmount}();
         } else if (purchaseToken != _collateralToken) {
             // update request collateral value to the actual swap output
-            requests[orderId].collateral =
-                _poolSwap(purchaseToken, _collateralToken, purchaseAmount, request.collateral, address(this));
+            requests[orderId].collateral = _poolSwap(
+                purchaseToken, _collateralToken, purchaseAmount, request.collateral, address(this), order.owner
+            );
         } else if (purchaseToken != ETH) {
             IERC20(purchaseToken).safeTransferFrom(msg.sender, address(this), request.collateral);
         }
@@ -410,7 +411,8 @@ contract OrderManager is Initializable, OwnableUpgradeable, ReentrancyGuardUpgra
         address _toToken,
         uint256 _amountIn,
         uint256 _minAmountOut,
-        address _receiver
+        address _receiver,
+        address _beneficier
     ) internal returns (uint256 amountOut) {
         address payToken;
         (payToken, _fromToken) = _fromToken == ETH ? (ETH, address(weth)) : (_fromToken, _fromToken);
@@ -420,16 +422,19 @@ contract OrderManager is Initializable, OwnableUpgradeable, ReentrancyGuardUpgra
         } else {
             IERC20(_fromToken).safeTransferFrom(msg.sender, address(pool), _amountIn);
         }
-        return _doSwap(_fromToken, _toToken, _minAmountOut, _receiver);
+        return _doSwap(_fromToken, _toToken, _minAmountOut, _receiver, _beneficier);
     }
 
-    function _doSwap(address _fromToken, address _toToken, uint256 _minAmountOut, address _receiver)
-        internal
-        returns (uint256 amountOut)
-    {
+    function _doSwap(
+        address _fromToken,
+        address _toToken,
+        uint256 _minAmountOut,
+        address _receiver,
+        address _beneficier
+    ) internal returns (uint256 amountOut) {
         IERC20 tokenOut = IERC20(_toToken);
         uint256 priorBalance = tokenOut.balanceOf(_receiver);
-        pool.swap(_fromToken, _toToken, _minAmountOut, _receiver);
+        pool.swap(_fromToken, _toToken, _minAmountOut, _receiver, abi.encode(_beneficier));
         amountOut = tokenOut.balanceOf(_receiver) - priorBalance;
     }
 

@@ -40,7 +40,8 @@ interface IPool {
         view
         returns (bool);
 
-    function swap(address _tokenIn, address _tokenOut, uint256 _minOut, address _to) external;
+    function swap(address _tokenIn, address _tokenOut, uint256 _minOut, address _to, bytes calldata extradata)
+        external;
 
     function addLiquidity(address _tranche, address _token, uint256 _amountIn, uint256 _minLpAmount, address _to)
         external;
@@ -113,7 +114,9 @@ interface IPool {
         address indexed tranche, address indexed sender, address token, uint256 lpAmount, uint256 amountOut, uint256 fee
     );
     event TokenWeightSet(TokenWeight[]);
-    event Swap(address indexed sender, address tokenIn, address tokenOut, uint256 amountIn, uint256 amountOut, uint256 fee);
+    event Swap(
+        address indexed sender, address tokenIn, address tokenOut, uint256 amountIn, uint256 amountOut, uint256 fee
+    );
     event PositionFeeSet(uint256 positionFee, uint256 liquidationFee);
     event DaoFeeSet(uint256 value);
     event SwapFeeSet(
