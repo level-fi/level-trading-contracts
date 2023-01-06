@@ -158,16 +158,16 @@ contract Pool is Initializable, OwnableUpgradeable, ReentrancyGuardUpgradeable, 
         _accrueInterest(_token);
         _amountIn = _requireAmount(_transferIn(_token, _amountIn));
 
-        (uint256 amountInAfterFee, uint256 feeAmount, uint256 lpAmount) = _calcAddLiquidity(_tranche, _token, _amountIn);
+        (uint256 amountInAfterFee, uint256 daoFee, uint256 lpAmount) = _calcAddLiquidity(_tranche, _token, _amountIn);
         if (lpAmount < _minLpAmount) {
             revert PoolErrors.SlippageExceeded();
         }
 
-        poolTokens[_token].feeReserve += MathUtils.frac(feeAmount, fee.daoFee, PRECISION);
+        poolTokens[_token].feeReserve += daoFee;
         trancheAssets[_tranche][_token].poolAmount += amountInAfterFee;
 
         ILPToken(_tranche).mint(_to, lpAmount);
-        emit LiquidityAdded(_tranche, msg.sender, _token, _amountIn, lpAmount, feeAmount);
+        emit LiquidityAdded(_tranche, msg.sender, _token, _amountIn, lpAmount, daoFee);
     }
 
     function removeLiquidity(address _tranche, address _tokenOut, uint256 _lpAmount, uint256 _minOut, address _to)
@@ -180,7 +180,7 @@ contract Pool is Initializable, OwnableUpgradeable, ReentrancyGuardUpgradeable, 
         _requireAmount(_lpAmount);
         ILPToken lpToken = ILPToken(_tranche);
 
-        (uint256 outAmount, uint256 outAmountAfterFee, uint256 feeAmount) =
+        (uint256 outAmount, uint256 outAmountAfterFee, uint256 daoFee) =
             _calcRemoveLiquidity(_tranche, _tokenOut, _lpAmount);
         if (outAmountAfterFee < _minOut) {
             revert PoolErrors.SlippageExceeded();
@@ -191,12 +191,12 @@ contract Pool is Initializable, OwnableUpgradeable, ReentrancyGuardUpgradeable, 
             revert PoolErrors.RemoveLiquidityTooMuch(_tranche, outAmount, trancheBalance);
         }
 
-        poolTokens[_tokenOut].feeReserve += MathUtils.frac(feeAmount, fee.daoFee, PRECISION);
+        poolTokens[_tokenOut].feeReserve += daoFee;
         _decreaseTranchePoolAmount(_tranche, _tokenOut, outAmountAfterFee);
 
         lpToken.burnFrom(msg.sender, _lpAmount);
         _doTransferOut(_tokenOut, _to, outAmountAfterFee);
-        emit LiquidityRemoved(_tranche, msg.sender, _tokenOut, _lpAmount, outAmountAfterFee, feeAmount);
+        emit LiquidityRemoved(_tranche, msg.sender, _tokenOut, _lpAmount, outAmountAfterFee, daoFee);
     }
 
     function swap(address _tokenIn, address _tokenOut, uint256 _minOut, address _to, bytes calldata extradata)
@@ -215,7 +215,7 @@ contract Pool is Initializable, OwnableUpgradeable, ReentrancyGuardUpgradeable, 
         if (amountOutAfterFee < _minOut) {
             revert PoolErrors.SlippageExceeded();
         }
-        uint256 daoFee = MathUtils.frac(swapFee, fee.daoFee, PRECISION);
+        uint256 daoFee = _calcDaoFee(swapFee);
         poolTokens[_tokenIn].feeReserve += daoFee;
         _rebalanceTranches(_tokenIn, amountIn - daoFee, _tokenOut, amountOutAfterFee);
         _doTransferOut(_tokenOut, _to, amountOutAfterFee);
@@ -245,7 +245,7 @@ contract Pool is Initializable, OwnableUpgradeable, ReentrancyGuardUpgradeable, 
 
         // update position
         vars.feeValue = _calcPositionFee(position, vars.sizeChanged, borrowIndex);
-        vars.daoFee = vars.feeValue * fee.daoFee / collateralPrice / PRECISION;
+        vars.daoFee = _calcDaoFee(vars.feeValue) / collateralPrice;
         vars.reserveAdded = vars.sizeChanged / collateralPrice;
         position.entryPrice = PositionUtils.calcAveragePrice(
             _side,
@@ -366,7 +366,7 @@ contract Pool is Initializable, OwnableUpgradeable, ReentrancyGuardUpgradeable, 
 
         if (address(poolHook) != address(0)) {
             poolHook.postDecreasePosition(
-                _owner, _indexToken, _collateralToken, _side, abi.encode(_sizeChanged, vars.collateralReduced)
+                _owner, _indexToken, _collateralToken, _side, abi.encode(vars.sizeChanged, vars.collateralReduced)
             );
         }
     }
@@ -643,7 +643,7 @@ contract Pool is Initializable, OwnableUpgradeable, ReentrancyGuardUpgradeable, 
     function _calcAddLiquidity(address _tranche, address _token, uint256 _amountIn)
         internal
         view
-        returns (uint256 amountInAfterFee, uint256 feeAmount, uint256 lpAmount)
+        returns (uint256 amountInAfterFee, uint256 daoFee, uint256 lpAmount)
     {
         if (!isStableCoin[_token] && riskFactor[_token][_tranche] == 0) {
             revert PoolErrors.AddLiquidityNotAllowed(_tranche, _token);
@@ -651,22 +651,23 @@ contract Pool is Initializable, OwnableUpgradeable, ReentrancyGuardUpgradeable, 
         uint256 tokenPrice = _getPrice(_token, false);
         uint256 valueChange = _amountIn * tokenPrice;
         uint256 _fee = _calcAddRemoveLPFee(_token, tokenPrice, valueChange, true);
-        amountInAfterFee = MathUtils.frac(_amountIn, PRECISION - _fee, PRECISION);
-        feeAmount = _amountIn - amountInAfterFee;
+        uint256 userAmount = MathUtils.frac(_amountIn, PRECISION - _fee, PRECISION);
+        daoFee = _calcDaoFee(_amountIn - userAmount);
+        amountInAfterFee = _amountIn - daoFee;
 
         uint256 poolValue = _getTrancheValue(_tranche, true);
         uint256 lpSupply = ILPToken(_tranche).totalSupply();
         if (lpSupply & poolValue == 0) {
-            lpAmount = MathUtils.frac(_amountIn, tokenPrice, LP_INITIAL_PRICE);
+            lpAmount = MathUtils.frac(userAmount, tokenPrice, LP_INITIAL_PRICE);
         } else {
-            lpAmount = (amountInAfterFee * tokenPrice * lpSupply) / poolValue;
+            lpAmount = (userAmount * tokenPrice * lpSupply) / poolValue;
         }
     }
 
     function _calcRemoveLiquidity(address _tranche, address _tokenOut, uint256 _lpAmount)
         internal
         view
-        returns (uint256 outAmount, uint256 outAmountAfterFee, uint256 feeAmount)
+        returns (uint256 outAmount, uint256 outAmountAfterFee, uint256 daoFee)
     {
         uint256 tokenPrice = _getPrice(_tokenOut, true);
         uint256 poolValue = _getTrancheValue(_tranche, false);
@@ -675,7 +676,7 @@ contract Pool is Initializable, OwnableUpgradeable, ReentrancyGuardUpgradeable, 
         uint256 _fee = _calcAddRemoveLPFee(_tokenOut, tokenPrice, valueChange, false);
         outAmount = (_lpAmount * poolValue) / totalSupply / tokenPrice;
         outAmountAfterFee = MathUtils.frac(outAmount, PRECISION - _fee, PRECISION);
-        feeAmount = outAmount - outAmountAfterFee;
+        daoFee = _calcDaoFee(outAmount - outAmountAfterFee);
     }
 
     function _transferIn(address _token, uint256 _amount) internal returns (uint256) {
@@ -1266,5 +1267,9 @@ contract Pool is Initializable, OwnableUpgradeable, ReentrancyGuardUpgradeable, 
         uint256 entryPrice = averageShortPrices[_tranche][_indexToken];
         averageShortPrices[_tranche][_indexToken] =
             PositionUtils.calcAveragePrice(Side.SHORT, lastSize, nextSize, entryPrice, _indexPrice, _realizedPnl);
+    }
+
+    function _calcDaoFee(uint256 _feeAmount) internal view returns (uint256) {
+        return MathUtils.frac(_feeAmount, fee.daoFee, PRECISION);
     }
 }
